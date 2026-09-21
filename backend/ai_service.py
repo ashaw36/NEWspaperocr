@@ -24,7 +24,7 @@ class AIResponseError(RuntimeError):
 class AIService:
     def __init__(self):
         load_dotenv()
-        self.backend, self.model, self.client, self.error = "unavailable", None, None, None
+        self.backend, self.model, self.vision_model, self.client, self.error = "unavailable", None, None, None, None
         provider = os.getenv("AI_PROVIDER", "").strip().lower()
         if provider in {"deepseek", "deepseek-chat", "deepseek-reasoner"} or (not provider and os.getenv("DEEPSEEK_API_KEY")):
             self._init_openai_compatible(
@@ -33,12 +33,14 @@ class AIService:
                 os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
                 os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             )
+            self.vision_model = os.getenv("DEEPSEEK_VISION_MODEL", "deepseek-flash")
         elif provider == "anthropic" or (not provider and os.getenv("ANTHROPIC_API_KEY")):
             try:
                 from anthropic import Anthropic
                 self.client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
                 self.backend = "anthropic"
                 self.model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+                self.vision_model = self.model
             except Exception as error:
                 self.error = str(error)
         elif provider == "openai" or (not provider and os.getenv("OPENAI_API_KEY")):
@@ -48,6 +50,7 @@ class AIService:
                 os.getenv("OPENAI_MODEL", "gpt-4o"),
                 os.getenv("OPENAI_BASE_URL"),
             )
+            self.vision_model = os.getenv("OPENAI_VISION_MODEL", self.model)
 
     def _init_openai_compatible(self, backend: str, api_key: str | None, model: str, base_url: str | None) -> None:
         if not api_key:
@@ -70,7 +73,7 @@ class AIService:
 
     @property
     def supports_vision(self) -> bool:
-        return self.available and self.backend != "deepseek"
+        return self.available and bool(self.vision_model)
 
     def health(self) -> Dict:
         return {"available": self.available, "backend": self.backend, "model": self.model, "vision": self.supports_vision, "error": self.error}
@@ -129,8 +132,6 @@ Document:
 
     def _vision_json(self, image_path: str | Path, prompt: str) -> Dict:
         self._require_client()
-        if self.backend == "deepseek":
-            raise AIUnavailableError("DeepSeek 文本模型不支持图片版面复核，请使用本地版面分析；OCR 后的语义校正、总结和问答仍可用")
         path = Path(image_path)
         media_type = mimetypes.guess_type(path.name)[0] or "image/png"
         encoded = base64.b64encode(path.read_bytes()).decode("ascii")
@@ -143,16 +144,20 @@ Document:
             }])
             content = response.content[0].text
         else:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": [
+            options = {
+                "model": self.vision_model or self.model,
+                "messages": [{"role": "user", "content": [
                     {"type": "text", "text": prompt},
                     {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{encoded}"}},
                 ]}],
-                response_format={"type": "json_object"},
-            )
+            }
+            # DeepSeek Flash supports vision but its vision guide does not require
+            # JSON mode, so rely on the JSON-only prompt and tolerant parsing.
+            if self.backend != "deepseek":
+                options["response_format"] = {"type": "json_object"}
+            response = self.client.chat.completions.create(**options)
             content = response.choices[0].message.content
-        return self._parse_json(content)
+        return self._parse_json(content, model=self.vision_model or self.model)
 
     def _text_json(self, prompt: str, max_tokens: int) -> Dict:
         self._require_client()
@@ -166,19 +171,27 @@ Document:
                 response_format={"type": "json_object"},
             )
             content = response.choices[0].message.content
-        return self._parse_json(content)
+        return self._parse_json(content, model=self.model)
 
     def _require_client(self):
         if not self.available:
             raise AIUnavailableError("Configure DEEPSEEK_API_KEY, ANTHROPIC_API_KEY or OPENAI_API_KEY to enable AI stages")
 
-    def _parse_json(self, content: str) -> Dict:
+    def _parse_json(self, content: str, model: str | None = None) -> Dict:
         cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.IGNORECASE)
         try:
             result = json.loads(cleaned)
         except json.JSONDecodeError as error:
-            raise AIResponseError(f"Model did not return valid JSON: {error}") from error
+            # Vision models sometimes add a short sentence around an otherwise
+            # valid JSON object even when the prompt requests JSON only.
+            start, end = cleaned.find("{"), cleaned.rfind("}")
+            if start < 0 or end <= start:
+                raise AIResponseError(f"Model did not return valid JSON: {error}") from error
+            try:
+                result = json.loads(cleaned[start:end + 1])
+            except json.JSONDecodeError:
+                raise AIResponseError(f"Model did not return valid JSON: {error}") from error
         if not isinstance(result, dict):
             raise AIResponseError("Model response must be a JSON object")
-        result["ai_backend"], result["ai_model"] = self.backend, self.model
+        result["ai_backend"], result["ai_model"] = self.backend, model or self.model
         return result

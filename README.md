@@ -33,14 +33,15 @@ py -m http.server 8080
 
 ## 配置 AI
 
-将 `backend/.env.example` 复制为 `backend/.env`，然后填写 `DEEPSEEK_API_KEY`。默认使用 `deepseek-chat`，用于逐页语义校正、全文总结和问答；DeepSeek 当前文本模型不负责图片版面复核，版面分析会使用本地计算机视觉。需要换模型时修改 `DEEPSEEK_MODEL`，需要换服务商时设置 `AI_PROVIDER`。
+将 `backend/.env.example` 复制为 `backend/.env`，然后填写 `DEEPSEEK_API_KEY`。默认使用 `deepseek-chat` 进行逐页语义校正、全文总结和问答，并使用 `deepseek-flash` 对报纸页面图片做版面类型、阅读顺序和文章分组复核。需要换模型时修改 `DEEPSEEK_MODEL` 或 `DEEPSEEK_VISION_MODEL`，需要换服务商时设置 `AI_PROVIDER`。
 
-DeepSeek 配置示例：
+DeepSeek 配置示例（官方图像理解接口见 [DeepSeek 图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision)）：
 
 ```dotenv
 AI_PROVIDER=deepseek
 DEEPSEEK_API_KEY=填入你的 DeepSeek API Key
 DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_VISION_MODEL=deepseek-flash
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 ```
 
