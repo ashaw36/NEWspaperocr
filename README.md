@@ -33,7 +33,18 @@ py -m http.server 8080
 
 ## 配置 AI
 
-将 `backend/.env.example` 复制为 `backend/.env`，配置 Anthropic 或 OpenAI 的 API 密钥。模型名可通过 `ANTHROPIC_MODEL` 或 `OPENAI_MODEL` 替换。视觉模型用于版面语义标签，语言模型用于逐页纠错、全文总结和问答。
+将 `backend/.env.example` 复制为 `backend/.env`，然后填写 `DEEPSEEK_API_KEY`。默认使用 `deepseek-chat`，用于逐页语义校正、全文总结和问答；DeepSeek 当前文本模型不负责图片版面复核，版面分析会使用本地计算机视觉。需要换模型时修改 `DEEPSEEK_MODEL`，需要换服务商时设置 `AI_PROVIDER`。
+
+DeepSeek 配置示例：
+
+```dotenv
+AI_PROVIDER=deepseek
+DEEPSEEK_API_KEY=填入你的 DeepSeek API Key
+DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+```
+
+不要把真实 `.env` 提交到 Git，也不要把 API Key 发到聊天中。修改后重启 `backend/app.py`，打开 `/api/health` 时应看到 `ai.available: true` 和 `ai.backend: deepseek`。
 
 ## 命令行
 

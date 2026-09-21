@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.deepseek.example
 
 # Python caches and local environments
 __pycache__/

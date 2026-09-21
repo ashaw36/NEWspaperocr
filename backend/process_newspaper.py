@@ -34,7 +34,7 @@ def main():
     if not ocr.engine_ready:
         parser.error(ocr.load_error or "OCR backend is unavailable")
     if (args.ai_layout or args.ai_correct) and not ai.available:
-        parser.error("AI was requested but ANTHROPIC_API_KEY or OPENAI_API_KEY is not configured")
+        parser.error("AI was requested but DEEPSEEK_API_KEY, ANTHROPIC_API_KEY or OPENAI_API_KEY is not configured")
 
     task = store.create(source.name, {"dpi": args.dpi, "max_pages": args.pages, "ai_layout": args.ai_layout})
     task["source_path"] = str(source)

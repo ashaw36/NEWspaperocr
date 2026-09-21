@@ -25,7 +25,15 @@ class AIService:
     def __init__(self):
         load_dotenv()
         self.backend, self.model, self.client, self.error = "unavailable", None, None, None
-        if os.getenv("ANTHROPIC_API_KEY"):
+        provider = os.getenv("AI_PROVIDER", "").strip().lower()
+        if provider in {"deepseek", "deepseek-chat", "deepseek-reasoner"} or (not provider and os.getenv("DEEPSEEK_API_KEY")):
+            self._init_openai_compatible(
+                "deepseek",
+                os.getenv("DEEPSEEK_API_KEY"),
+                os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+                os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+            )
+        elif provider == "anthropic" or (not provider and os.getenv("ANTHROPIC_API_KEY")):
             try:
                 from anthropic import Anthropic
                 self.client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
@@ -33,21 +41,39 @@ class AIService:
                 self.model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
             except Exception as error:
                 self.error = str(error)
-        elif os.getenv("OPENAI_API_KEY"):
-            try:
-                from openai import OpenAI
-                self.client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-                self.backend = "openai"
-                self.model = os.getenv("OPENAI_MODEL", "gpt-4o")
-            except Exception as error:
-                self.error = str(error)
+        elif provider == "openai" or (not provider and os.getenv("OPENAI_API_KEY")):
+            self._init_openai_compatible(
+                "openai",
+                os.getenv("OPENAI_API_KEY"),
+                os.getenv("OPENAI_MODEL", "gpt-4o"),
+                os.getenv("OPENAI_BASE_URL"),
+            )
+
+    def _init_openai_compatible(self, backend: str, api_key: str | None, model: str, base_url: str | None) -> None:
+        if not api_key:
+            self.error = f"{backend.upper()} API key is not configured"
+            return
+        try:
+            from openai import OpenAI
+            options = {"api_key": api_key}
+            if base_url:
+                options["base_url"] = base_url.rstrip("/")
+            self.client = OpenAI(**options)
+            self.backend = backend
+            self.model = model
+        except Exception as error:
+            self.error = str(error)
 
     @property
     def available(self) -> bool:
         return self.client is not None
 
+    @property
+    def supports_vision(self) -> bool:
+        return self.available and self.backend != "deepseek"
+
     def health(self) -> Dict:
-        return {"available": self.available, "backend": self.backend, "model": self.model, "error": self.error}
+        return {"available": self.available, "backend": self.backend, "model": self.model, "vision": self.supports_vision, "error": self.error}
 
     def enrich_layout(self, image_path: str | Path, layout: Dict) -> Dict:
         prompt = f"""You are planning OCR windows for a historical Chinese newspaper page.
@@ -103,6 +129,8 @@ Document:
 
     def _vision_json(self, image_path: str | Path, prompt: str) -> Dict:
         self._require_client()
+        if self.backend == "deepseek":
+            raise AIUnavailableError("DeepSeek 文本模型不支持图片版面复核，请使用本地版面分析；OCR 后的语义校正、总结和问答仍可用")
         path = Path(image_path)
         media_type = mimetypes.guess_type(path.name)[0] or "image/png"
         encoded = base64.b64encode(path.read_bytes()).decode("ascii")
@@ -142,7 +170,7 @@ Document:
 
     def _require_client(self):
         if not self.available:
-            raise AIUnavailableError("Configure ANTHROPIC_API_KEY or OPENAI_API_KEY to enable AI stages")
+            raise AIUnavailableError("Configure DEEPSEEK_API_KEY, ANTHROPIC_API_KEY or OPENAI_API_KEY to enable AI stages")
 
     def _parse_json(self, content: str) -> Dict:
         cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.IGNORECASE)

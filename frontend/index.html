@@ -433,7 +433,7 @@
       const aiReady=Boolean(state.health?.ai?.available), canCorrect=!busy&&completed.length>0;
       $('correctBtn').disabled=!canCorrect; $('correctNow').disabled=!aiReady||!canCorrect||($('correctionScope').value==='current'&&!currentDone);
       $('correctionScope').disabled=busy||!completed.length;
-      $('aiNotice').textContent=aiReady?'AI 会参考窗口类型、文章分组和阅读顺序，保留繁体与历史措辞，并记录每一处修改。':'AI 尚未配置。请在 backend/.env 配置 ANTHROPIC_API_KEY 或 OPENAI_API_KEY，重启后端后再进行语义校正。原始 OCR 与人工修订仍可正常使用。';
+      $('aiNotice').textContent=aiReady?`当前 AI：${state.health.ai.backend} · ${state.health.ai.model || '默认模型'}。会参考窗口类型、文章分组和阅读顺序，保留繁体与历史措辞，并记录每一处修改。`:'AI 尚未配置。请在 backend/.env 配置 DEEPSEEK_API_KEY、ANTHROPIC_API_KEY 或 OPENAI_API_KEY，重启后端后再进行语义校正。原始 OCR 与人工修订仍可正常使用。';
       $('correctionHint').textContent=!completed.length?'请先完成至少一页 OCR':($('correctionScope').value==='current'&&!currentDone?'当前页尚未完成 OCR':`已有 ${completed.length} 页可校正`);
       const hasText=completed.length>0; $('summaryBtn').disabled=!aiReady||!hasText; $('questionBtn').disabled=!aiReady||!hasText;
       for(const [id,kind] of [['exportRaw','raw'],['exportCorrected','corrected'],['exportJson','json']]) $(id).href=`${API}/api/tasks/${state.task.id}/export/${kind}`;

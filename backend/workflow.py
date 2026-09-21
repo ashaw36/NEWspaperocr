@@ -41,7 +41,7 @@ class DocumentWorkflow:
 
             planned = []
             warnings = []
-            use_ai = bool(task["options"].get("ai_layout", True)) and self.ai.available
+            use_ai = bool(task["options"].get("ai_layout", True)) and self.ai.supports_vision
             for index, page in enumerate(pages, 1):
                 image = read_image(page["path"])
                 proposal = self.layout.propose(image, page["page_number"])
