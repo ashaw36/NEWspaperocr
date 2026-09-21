@@ -21,6 +21,17 @@ class PDFProcessor:
         output.mkdir(parents=True, exist_ok=True)
         return self._render_pdf(source, output, max_pages) if source.suffix.lower() == ".pdf" else [self._render_image(source, output)]
 
+    def page_count(self, source_path: str | Path) -> int:
+        source = Path(source_path)
+        if source.suffix.lower() != ".pdf":
+            return 1
+        import pymupdf
+        document = pymupdf.open(source)
+        try:
+            return document.page_count
+        finally:
+            document.close()
+
     def _render_pdf(self, source: Path, output: Path, max_pages: Optional[int]) -> List[Dict]:
         import pymupdf
         document = pymupdf.open(source)

@@ -8,6 +8,7 @@ import numpy as np
 from layout_engine import LayoutEngine
 from task_store import TaskStore
 from workflow import DocumentWorkflow, WorkflowStateError
+from ocr_engine import assess_quality, prepare_crop_for_ocr
 
 
 class FakeOCR:
@@ -55,6 +56,16 @@ class LayoutEngineTests(unittest.TestCase):
         self.assertEqual(0.0, regions[0]["bbox"]["x"])
         self.assertEqual(1.0, regions[0]["bbox"]["width"])
         self.assertEqual(2, regions[0]["order"])
+
+    def test_ocr_quality_flags_empty_and_low_confidence(self):
+        result = assess_quality("", 0.0, 0)
+        self.assertEqual("needs_review", result["status"])
+        self.assertIn("empty", result["flags"])
+
+    def test_vertical_preprocessing_changes_orientation(self):
+        image = np.zeros((20, 40, 3), dtype=np.uint8)
+        prepared = prepare_crop_for_ocr(image, "vertical-rtl")
+        self.assertEqual((40, 20), prepared.shape[:2])
 
 
 class TaskStoreTests(unittest.TestCase):

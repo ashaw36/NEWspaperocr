@@ -1,0 +1,4 @@
+interface:
+  display_name: Historical Newspaper Reader
+  short_description: Read, correct and analyze scanned historical Chinese newspapers.
+  default_prompt: Recognize this historical newspaper page, preserve its original wording, and return a readable final transcription with uncertainty notes.

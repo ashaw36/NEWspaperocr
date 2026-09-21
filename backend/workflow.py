@@ -26,26 +26,33 @@ class DocumentWorkflow:
         self.store, self.ocr, self.ai = store, ocr, ai
         self.layout = LayoutEngine()
 
-    def analyze_layout(self, task_id: str) -> None:
+    def analyze_layout(self, task_id: str, max_pages_override: int | None = None) -> None:
         try:
             task = self.store.load(task_id)
             task.update(status="layout_running", stage="layout", error=None)
             self.store.save(task)
             task_dir = self.store.task_dir(task_id)
             processor = PDFProcessor(dpi=int(task["options"].get("dpi", 180)))
+            document_page_count = processor.page_count(task["source_path"])
+            requested_limit = max_pages_override or task["options"].get("max_pages")
+            if requested_limit is None and not task["options"].get("layout_expanded"):
+                requested_limit = 1
             pages = processor.render_document(
-                task["source_path"], task_dir / "pages", max_pages=task["options"].get("max_pages") or None
+                task["source_path"], task_dir / "pages", max_pages=requested_limit or None
             )
+            task["document_page_count"] = document_page_count
             task["progress"] = {"current": 0, "total": len(pages), "message": "正在分析页面结构"}
             self.store.save(task)
 
+            existing_pages = {page["page_number"]: page for page in task.get("pages", [])}
             planned = []
             warnings = []
             use_ai = bool(task["options"].get("ai_layout", True)) and self.ai.supports_vision
             for index, page in enumerate(pages, 1):
                 image = read_image(page["path"])
-                proposal = self.layout.propose(image, page["page_number"])
-                if use_ai:
+                prior_layout = existing_pages.get(page["page_number"], {}).get("layout")
+                proposal = prior_layout or self.layout.propose(image, page["page_number"])
+                if use_ai and prior_layout is None:
                     try:
                         enriched = self.ai.enrich_layout(page["path"], proposal)
                         enriched["regions"] = self.layout.normalize_regions(enriched.get("regions", proposal["regions"]))
@@ -73,9 +80,20 @@ class DocumentWorkflow:
                 warnings=warnings,
                 progress={"current": len(pages), "total": len(pages), "message": "请检查并确认 OCR 窗口"},
             )
+            if max_pages_override:
+                task["options"]["layout_expanded"] = True
             self.store.save(task)
         except Exception as error:
             self._fail(task_id, "layout", error)
+
+    def expand_layout(self, task_id: str) -> None:
+        task = self.store.load(task_id)
+        if task.get("status") in {"layout_running", "ocr_running", "correction_running"}:
+            raise WorkflowStateError("The task is currently running")
+        total = int(task.get("document_page_count") or 1)
+        task["options"]["layout_expanded"] = True
+        task["options"]["layout_target_pages"] = total
+        return self.store.save(task)
 
     def save_layout(self, task_id: str, page_updates: List[Dict]) -> Dict:
         task = self.store.load(task_id)
@@ -130,7 +148,7 @@ class DocumentWorkflow:
                     if region["label"] == "ignore":
                         continue
                     crop, pixel_box = self._crop(image, region["bbox"])
-                    prepared = prepare_crop_for_ocr(crop)
+                    prepared = prepare_crop_for_ocr(crop, region["direction"])
                     crop_path = crops_dir / f"p{page['page_number']:03d}_{region['id']}.png"
                     if not write_image(crop_path, crop):
                         raise RuntimeError(f"Cannot save OCR crop: {crop_path.name}")
@@ -139,7 +157,8 @@ class DocumentWorkflow:
                         "region_id": region["id"], "order": region["order"], "label": region["label"],
                         "article_id": region["article_id"], "direction": region["direction"], "bbox": region["bbox"],
                         "pixel_bbox": pixel_box, "raw_text": recognition["full_text"],
-                        "confidence": recognition["confidence"], "text_blocks": recognition["text_blocks"],
+                        "confidence": recognition["confidence"], "quality": recognition.get("quality", {"status": "unknown", "score": recognition["confidence"], "flags": []}),
+                        "text_blocks": recognition["text_blocks"],
                         "crop_url": f"/api/tasks/{task_id}/crops/{crop_path.name}",
                     })
                     completed += 1
@@ -195,7 +214,12 @@ class DocumentWorkflow:
             task["progress"] = {"current": 0, "total": len(raw_pages), "message": "正在进行 AI 语义校正"}
             self.store.save(task)
             for index, page in enumerate(raw_pages, 1):
-                corrected = self.ai.correct_page(page["page_number"], page["regions"], page.get("raw_text", ""))
+                page_image = self.store.task_dir(task_id) / "pages" / f"page_{page['page_number']:03d}.png"
+                try:
+                    corrected = self.ai.correct_page(page["page_number"], page["regions"], page.get("raw_text", ""), page_image=page_image)
+                except TypeError:
+                    # Keep compatibility with lightweight/custom AI adapters.
+                    corrected = self.ai.correct_page(page["page_number"], page["regions"], page.get("raw_text", ""))
                 corrected["page_number"] = page["page_number"]
                 corrected_by_page[page["page_number"]] = corrected
                 result = self._save_corrected_result(task_id, list(corrected_by_page.values()), raw)

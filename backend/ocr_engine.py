@@ -55,15 +55,19 @@ class OCREngine:
         except Exception as error:
             raise OCRExecutionError(str(error)) from error
 
-        blocks = self._sort(blocks, direction)
+        # Vertical crops are rotated by prepare_crop_for_ocr before reaching
+        # the engine, so their OCR blocks are now horizontally ordered.
+        blocks = self._sort(blocks, "horizontal-ltr" if direction == "vertical-rtl" else direction)
         for index, block in enumerate(blocks, 1):
             block["reading_order"] = index
         confidence = sum(block["confidence"] for block in blocks) / len(blocks) if blocks else 0.0
+        full_text = "\n".join(block["text"] for block in blocks)
         return {
             "text_blocks": blocks,
-            "full_text": "\n".join(block["text"] for block in blocks),
+            "full_text": full_text,
             "total_blocks": len(blocks),
             "confidence": confidence,
+            "quality": assess_quality(full_text, confidence, len(blocks)),
             "engine": self.backend,
         }
 
@@ -95,8 +99,39 @@ class OCREngine:
         return sorted(blocks, key=lambda block: (center(block)[1], center(block)[0]))
 
 
-def prepare_crop_for_ocr(image: np.ndarray) -> np.ndarray:
+def prepare_crop_for_ocr(image: np.ndarray, direction: str = "horizontal-ltr") -> np.ndarray:
+    # OCR engines are much more reliable on horizontal lines than on narrow
+    # traditional vertical columns. Rotate only the vertical crop; the region
+    # metadata still preserves the original historical reading direction.
+    if direction == "vertical-rtl":
+        image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image.copy()
-    denoised = cv2.fastNlMeansDenoising(gray, None, h=7, templateWindowSize=7, searchWindowSize=21)
+    denoised = cv2.fastNlMeansDenoising(gray, None, h=5, templateWindowSize=7, searchWindowSize=21)
     enhanced = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(denoised)
     return cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+
+
+def assess_quality(text: str, confidence: float, block_count: int) -> Dict:
+    """Return explainable local-OCR quality signals for UI and routing."""
+    compact = "".join((text or "").split())
+    flags = []
+    if not compact:
+        flags.append("empty")
+    if confidence < 0.5:
+        flags.append("low-confidence")
+    elif confidence < 0.72:
+        flags.append("medium-confidence")
+    if compact and len(compact) < 4:
+        flags.append("too-short")
+    if block_count == 0:
+        flags.append("no-text-blocks")
+    repeated = sum(1 for left, right in zip(compact, compact[1:]) if left == right)
+    if len(compact) >= 8 and repeated / max(1, len(compact) - 1) > 0.35:
+        flags.append("repeated-characters")
+    if "empty" in flags or "no-text-blocks" in flags or "low-confidence" in flags:
+        status = "needs_review"
+    elif flags:
+        status = "check"
+    else:
+        status = "pass"
+    return {"status": status, "score": round(float(confidence), 4), "flags": flags}

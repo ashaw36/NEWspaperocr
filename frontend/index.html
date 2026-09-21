@@ -180,6 +180,7 @@
         <button id="nextPage" aria-label="下一页">›</button>
         <button id="addRegion">添加窗口</button>
         <button id="saveLayout">保存版面</button>
+        <button id="expandLayout" hidden>分析全部页面</button>
         <select id="ocrScope" aria-label="OCR范围"><option value="current">仅当前页</option><option value="all">全部页面</option></select>
         <span class="spacer"></span>
         <button class="primary" id="confirmOcr">确认并识别当前页</button>
@@ -414,10 +415,11 @@
     }
     $('deleteRegion').onclick = () => { currentPage().layout.regions=currentPage().layout.regions.filter(region=>region.id!==state.selectedId); state.selectedId=null; renumber(); renderRegions(); renderInspector(); };
     function renumber(){ currentPage().layout.regions.sort((a,b)=>a.order-b.order).forEach((region,index)=>region.order=index+1); }
-    function renderRegionList(){ $('regionList').innerHTML=currentPage().layout.regions.slice().sort((a,b)=>a.order-b.order).map(region=>`<button class="region-row${region.id===state.selectedId?' active':''}" data-id="${region.id}"><b>${region.order}</b><span>${labels[region.label]} · ${region.article_id}</span><small class="confidence">${Math.round(region.confidence*100)}%</small></button>`).join(''); document.querySelectorAll('.region-row').forEach(node=>node.onclick=()=>selectRegion(node.dataset.id)); }
+    function renderRegionList(){ $('regionList').innerHTML=currentPage().layout.regions.slice().sort((a,b)=>a.order-b.order).map(region=>{const quality=state.raw?.pages?.find(page=>page.page_number===currentPage().page_number)?.regions?.find(item=>item.region_id===region.id)?.quality; const mark=quality?.status==='needs_review'?' · 待复核':quality?.status==='check'?' · 检查':''; return `<button class="region-row${region.id===state.selectedId?' active':''}" data-id="${region.id}"><b>${region.order}</b><span>${labels[region.label]} · ${region.article_id}${mark}</span><small class="confidence">${Math.round((quality?.score??region.confidence??0)*100)}%</small></button>`}).join(''); document.querySelectorAll('.region-row').forEach(node=>node.onclick=()=>selectRegion(node.dataset.id)); }
     function layoutPayload(){ return state.task.pages.map(page=>({page_number:page.page_number,regions:page.layout.regions})); }
     async function saveLayout(){ state.task=await api(`/api/tasks/${state.task.id}/layout`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({pages:layoutPayload()})}); message($('taskMessage'),'版面已保存'); }
     $('saveLayout').onclick=async()=>{try{await saveLayout();}catch(error){message($('taskMessage'),error.message,true);}};
+    $('expandLayout').onclick=async()=>{try{state.task=await api(`/api/tasks/${state.task.id}/layout/expand`,{method:'POST'}); updateActions(); pollTask(); message($('taskMessage'),'正在后台分析其余页面，当前页仍可继续确认');}catch(error){message($('taskMessage'),error.message,true);}};
     $('ocrScope').onchange=updateActions;
     $('confirmOcr').onclick=async()=>{try{const pageNumbers=$('ocrScope').value==='current'?[currentPage().page_number]:state.task.pages.map(page=>page.page_number); state.task=await api(`/api/tasks/${state.task.id}/ocr`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pages:layoutPayload(),page_numbers:pageNumbers})}); updateActions(); stage('ocr'); showTab('raw'); pollTask();}catch(error){message($('taskMessage'),error.message,true);}};
     $('correctBtn').onclick=()=>showTab('corrected');
@@ -429,6 +431,8 @@
       const completed=state.raw?.pages?.map(page=>page.page_number)||state.task.ocr?.completed_pages||[];
       const currentDone=currentPage()&&completed.includes(currentPage().page_number);
       $('confirmOcr').disabled=busy||!state.task.pages.length; $('saveLayout').disabled=busy; $('addRegion').disabled=busy; $('ocrScope').disabled=busy;
+      $('expandLayout').hidden=!state.task.document_page_count || state.task.pages.length>=state.task.document_page_count;
+      $('expandLayout').disabled=busy;
       $('confirmOcr').textContent=$('ocrScope').value==='current'?'确认并识别当前页':`确认并识别全部 ${state.task.pages.length} 页`;
       const aiReady=Boolean(state.health?.ai?.available), canCorrect=!busy&&completed.length>0;
       $('correctBtn').disabled=!canCorrect; $('correctNow').disabled=!aiReady||!canCorrect||($('correctionScope').value==='current'&&!currentDone);
@@ -449,7 +453,7 @@
       $('correctedPageLabel').textContent=`第 ${pageNumber} 页 AI 校正稿`;
       $('correctedText').value=correctedPage?.corrected_text||''; $('correctedText').disabled=!correctedPage; $('saveCorrectedText').disabled=!correctedPage;
       $('correctedHint').textContent=correctedPage?(correctedPage.manually_edited?'已保存人工定稿':'可继续修改，保存后用于总结与分析'):'当前页尚未进行 AI 语义校正';
-      renderCorrectionDetails(correctedPage);
+      renderCorrectionDetails(correctedPage); renderRegionList();
     }
     function renderCorrectionDetails(page){
       const details=$('correctionDetails'); details.textContent=''; if(!page)return;
@@ -467,7 +471,19 @@
     $('prevPage').onclick=()=>{if(state.pageIndex>0){state.pageIndex--;renderPage();}}; $('nextPage').onclick=()=>{if(state.pageIndex<state.task.pages.length-1){state.pageIndex++;renderPage();}};
     function showTab(name){document.querySelectorAll('.tab').forEach(item=>item.classList.toggle('active',item.dataset.tab===name)); for(const item of ['raw','corrected','analysis']) $(`${item}Panel`).hidden=item!==name; if(name==='corrected')updateActions();}
     document.querySelectorAll('.tab').forEach(tab=>tab.onclick=()=>showTab(tab.dataset.tab));
-    async function analyze(action){ const input=$('analysisInput').value.trim(); $('analysisOutput').textContent='AI正在分析...'; try{const payload=action==='summary'?{action,instruction:input}:{action,question:input}; const result=await api(`/api/tasks/${state.task.id}/analysis`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); $('analysisOutput').textContent=JSON.stringify(result,null,2);}catch(error){$('analysisOutput').textContent=error.message;} }
+    function analysisList(value){ if(!Array.isArray(value))return ''; return value.filter(item=>item!==null&&item!==undefined&&String(item).trim()).map(item=>`<li>${escapeHtml(typeof item==='string'?item:(item.name||item.text||JSON.stringify(item)))}</li>`).join(''); }
+    function escapeHtml(value){ return String(value).replace(/[&<>"']/g, char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char])); }
+    function renderAnalysis(result, action){
+      const output=$('analysisOutput'); output.innerHTML='';
+      if(action==='question'){
+        const answer=escapeHtml(result.answer||'未能得到明确回答');
+        output.innerHTML=`<h3>回答</h3><p>${answer}</p>${result.evidence?.length?`<h3>依据</h3><ul>${analysisList(result.evidence)}</ul>`:''}${result.uncertainties?.length?`<h3>不确定性</h3><ul>${analysisList(result.uncertainties)}</ul>`:''}`;
+        return;
+      }
+      const sections=[['摘要',result.summary],['关键要点',result.key_points],['人物',result.people],['机构',result.organizations],['地点',result.places],['日期',result.dates],['主题',result.topics],['不确定性',result.uncertainties]];
+      output.innerHTML=sections.filter(([,value])=>Array.isArray(value)?value.length:value).map(([title,value])=>`<section><h3>${title}</h3>${Array.isArray(value)?`<ul>${analysisList(value)}</ul>`:`<p>${escapeHtml(value)}</p>`}</section>`).join('')||'<p>没有返回可展示的分析内容。</p>';
+    }
+    async function analyze(action){ const input=$('analysisInput').value.trim(); $('analysisOutput').textContent='AI正在分析...'; try{const payload=action==='summary'?{action,instruction:input}:{action,question:input}; const result=await api(`/api/tasks/${state.task.id}/analysis`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); renderAnalysis(result,action);}catch(error){$('analysisOutput').textContent=error.message;} }
     $('summaryBtn').onclick=()=>analyze('summary'); $('questionBtn').onclick=()=>analyze('question');
     checkHealth(); loadRecentTasks();
   </script>

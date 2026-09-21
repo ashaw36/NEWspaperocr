@@ -122,6 +122,13 @@ def update_layout(task_id):
     return jsonify(public_task(workflow.save_layout(task_id, pages)))
 
 
+@app.post("/api/tasks/<task_id>/layout/expand")
+def expand_layout(task_id):
+    task = workflow.expand_layout(task_id)
+    executor.submit(workflow.analyze_layout, task_id, int(task.get("document_page_count") or 1))
+    return jsonify(public_task(store.load(task_id))), 202
+
+
 @app.post("/api/tasks/<task_id>/ocr")
 def start_ocr(task_id):
     payload = request.get_json(silent=True) or {}

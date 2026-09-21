@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import mimetypes
 import os
@@ -92,23 +93,39 @@ Proposal:
 Return {{"layout_type":"...","reading_direction":"...","regions":[...]}}"""
         return self._vision_json(image_path, prompt)
 
-    def correct_page(self, page_number: int, regions: List[Dict], page_text: str = "") -> Dict:
+    def correct_page(self, page_number: int, regions: List[Dict], page_text: str = "", page_image: str | Path | None = None) -> Dict:
         compact = [{
             "region_id": region["region_id"], "order": region["order"], "label": region["label"],
             "article_id": region["article_id"], "direction": region["direction"],
             "raw_text": region.get("raw_text", ""), "confidence": region.get("confidence", 0),
+            "quality": region.get("quality", {}),
         } for region in regions]
         prompt = f"""Proofread OCR from page {page_number} of a 1945 traditional-Chinese newspaper.
-Use region order, labels, article grouping and semantics. Correct only likely OCR errors; preserve historical wording,
-traditional characters, names and uncertainty. Never silently modernize the text. Return JSON only with corrected_text,
-articles (id, title, text), corrections (region_id, original, corrected, reason, confidence), and warnings.
+Use the page image as the primary evidence and the OCR text only as a draft. Use region order, labels, article grouping
+and semantics. Correct only characters supported by the image or strong context; preserve historical wording, traditional
+characters, names and uncertainty. Never silently modernize the text. Return JSON only with corrected_text, articles
+(id, title, text), corrections (region_id, original, corrected, reason, confidence), and warnings.
 
 OCR regions:
 {json.dumps(compact, ensure_ascii=False)}
 
-Authoritative page text after any human edits:
+Page OCR draft after any human edits (use it as a transcription hint, not as unquestionable truth):
 {page_text}"""
-        return self._text_json(prompt, max_tokens=5000)
+        if page_image and self.supports_vision:
+            try:
+                result = self._vision_json(page_image, prompt, max_tokens=6000)
+                result.setdefault("transcription_mode", "vision")
+                return result
+            except Exception as error:
+                # Text correction remains a safe fallback when the vision
+                # provider is unavailable or rejects a large page image.
+                result = self._text_json(prompt, max_tokens=5000)
+                result.setdefault("warnings", []).append("视觉校正调用失败，已回退到文本语义校正；请复核低置信度区域。")
+                result["transcription_mode"] = "text-fallback"
+                return result
+        result = self._text_json(prompt, max_tokens=5000)
+        result.setdefault("transcription_mode", "text")
+        return result
 
     def summarize_document(self, text: str, instruction: str = "") -> Dict:
         prompt = f"""Analyze this OCR transcription of a historical Chinese newspaper. Return JSON only with summary,
@@ -130,13 +147,12 @@ Document:
 {text[:80000]}"""
         return self._text_json(prompt, max_tokens=2500)
 
-    def _vision_json(self, image_path: str | Path, prompt: str) -> Dict:
+    def _vision_json(self, image_path: str | Path, prompt: str, max_tokens: int = 5000) -> Dict:
         self._require_client()
         path = Path(image_path)
-        media_type = mimetypes.guess_type(path.name)[0] or "image/png"
-        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        media_type, encoded = self._encode_vision_image(path)
         if self.backend == "anthropic":
-            response = self.client.messages.create(model=self.model, max_tokens=5000, messages=[{
+            response = self.client.messages.create(model=self.model, max_tokens=max_tokens, messages=[{
                 "role": "user", "content": [
                     {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": encoded}},
                     {"type": "text", "text": prompt},
@@ -155,9 +171,27 @@ Document:
             # JSON mode, so rely on the JSON-only prompt and tolerant parsing.
             if self.backend != "deepseek":
                 options["response_format"] = {"type": "json_object"}
+            options["max_tokens"] = max_tokens
             response = self.client.chat.completions.create(**options)
             content = response.choices[0].message.content
         return self._parse_json(content, model=self.vision_model or self.model)
+
+    def _encode_vision_image(self, path: Path) -> tuple[str, str]:
+        """Bound image dimensions/bytes before sending a page to a vision model."""
+        try:
+            from PIL import Image
+            with Image.open(path) as image:
+                image = image.convert("RGB")
+                max_dimension = 1800
+                scale = min(1.0, max_dimension / max(image.size))
+                if scale < 1.0:
+                    image = image.resize((max(1, int(image.width * scale)), max(1, int(image.height * scale))), Image.LANCZOS)
+                buffer = io.BytesIO()
+                image.save(buffer, format="JPEG", quality=82, optimize=True)
+                return "image/jpeg", base64.b64encode(buffer.getvalue()).decode("ascii")
+        except Exception:
+            media_type = mimetypes.guess_type(path.name)[0] or "image/png"
+            return media_type, base64.b64encode(path.read_bytes()).decode("ascii")
 
     def _text_json(self, prompt: str, max_tokens: int) -> Dict:
         self._require_client()
