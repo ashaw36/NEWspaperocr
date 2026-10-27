@@ -8,7 +8,7 @@ import numpy as np
 from layout_engine import LayoutEngine
 from task_store import TaskStore
 from workflow import DocumentWorkflow, WorkflowStateError
-from ocr_engine import assess_quality, prepare_crop_for_ocr
+from ocr_engine import OCREngine, assess_quality, prepare_crop_for_ocr
 
 
 class FakeOCR:
@@ -66,6 +66,34 @@ class LayoutEngineTests(unittest.TestCase):
         image = np.zeros((20, 40, 3), dtype=np.uint8)
         prepared = prepare_crop_for_ocr(image, "vertical-rtl")
         self.assertEqual((40, 20), prepared.shape[:2])
+
+    def test_paddle_v3_result_maps_polygons_text_and_scores(self):
+        class PaddleResult:
+            json = {
+                "res": {
+                    "dt_polys": [[[1, 2], [11, 2], [11, 12], [1, 12]]],
+                    "rec_texts": ["古籍文字"],
+                    "rec_scores": [0.93],
+                }
+            }
+
+        engine = OCREngine.__new__(OCREngine)
+        blocks = engine._paddle_v3_blocks([PaddleResult()])
+
+        self.assertEqual(1, len(blocks))
+        self.assertEqual("古籍文字", blocks[0]["text"])
+        self.assertEqual(0.93, blocks[0]["confidence"])
+        self.assertEqual([[1.0, 2.0], [11.0, 2.0], [11.0, 12.0], [1.0, 12.0]], blocks[0]["bbox"])
+
+    def test_paddle_v3_result_accepts_rectangle_boxes(self):
+        engine = OCREngine.__new__(OCREngine)
+        blocks = engine._paddle_v3_blocks([{
+            "rec_boxes": [[2, 3, 18, 24]],
+            "rec_texts": ["报纸"],
+            "rec_scores": [0.8],
+        }])
+
+        self.assertEqual([[2.0, 3.0], [18.0, 3.0], [18.0, 24.0], [2.0, 24.0]], blocks[0]["bbox"])
 
 
 class TaskStoreTests(unittest.TestCase):

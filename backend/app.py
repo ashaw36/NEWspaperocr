@@ -7,7 +7,7 @@ from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, render_template
 from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
@@ -36,7 +36,11 @@ for interrupted in store.list_recent(limit=1000):
             error={"message": "服务曾在任务运行时停止。已完成的分页结果仍然保留，可以重新启动该阶段。", "type": "InterruptedTask"},
         )
         store.save(interrupted)
-ocr_engine = OCREngine(use_gpu=os.getenv("OCR_USE_GPU", "false").lower() == "true")
+ocr_engine = OCREngine(
+    use_gpu=os.getenv("OCR_USE_GPU", "false").lower() == "true",
+    backend=os.getenv("OCR_BACKEND", "auto"),
+    paddle_version=os.getenv("OCR_PADDLE_VERSION", "PP-OCRv5"),
+)
 ai_service = AIService()
 workflow = DocumentWorkflow(store, ocr_engine, ai_service)
 executor = ThreadPoolExecutor(max_workers=max(1, int(os.getenv("WORKFLOW_WORKERS", "2"))), thread_name_prefix="newspaper-ocr")
@@ -62,6 +66,13 @@ def public_task(task):
 @app.get("/")
 def index():
     return jsonify({"service": "Historical Newspaper OCR Workflow", "version": "2.0", "health": "/api/health"})
+
+
+@app.get("/demo.html")
+@app.get("/demo")
+def demo():
+    """演示界面"""
+    return render_template("demo.html")
 
 
 @app.get("/api/health")
@@ -219,16 +230,41 @@ def crop_image(task_id, name):
 @app.get("/api/tasks/<task_id>/export/<kind>")
 def export(task_id, kind):
     task_dir = store.task_dir(task_id)
-    candidates = {"raw": ("raw.txt", "text/plain"), "corrected": ("corrected.txt", "text/plain"), "json": ("corrected.json", "application/json")}
+    candidates = {
+        "raw": ("raw.txt", "text/plain"),
+        "corrected": ("corrected.txt", "text/plain"),
+        "json": ("corrected.json", "application/json"),
+        "markdown": ("final_document.md", "text/markdown"),
+        "html": ("final_document.html", "text/html")
+    }
     if kind not in candidates:
-        return jsonify({"error": "kind must be raw, corrected or json"}), 400
+        return jsonify({"error": "kind must be raw, corrected, json, markdown or html"}), 400
+
     name, mimetype = candidates[kind]
     path = task_dir / name
+
+    # Generate final document if requested and not exists
+    if kind in ("markdown", "html") and not path.exists():
+        try:
+            workflow.generate_final_document(task_id, format=kind)
+        except Exception as e:
+            return jsonify({"error": f"Failed to generate document: {str(e)}"}), 500
+
     if kind == "json" and not path.exists():
         path = task_dir / "ocr.json"
     if not path.exists():
         return jsonify({"error": "Export is not ready"}), 404
     return send_file(path, as_attachment=True, download_name=f"{task_id}_{path.name}", mimetype=mimetype)
+
+
+@app.get("/api/tasks/<task_id>/validate")
+def validate_task(task_id):
+    """Validate OCR quality and completeness."""
+    try:
+        report = workflow.validate_quality(task_id)
+        return jsonify(report)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.errorhandler(TaskNotFoundError)

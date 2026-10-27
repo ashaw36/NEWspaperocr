@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import traceback
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Dict, List
 
@@ -48,17 +49,21 @@ class DocumentWorkflow:
             planned = []
             warnings = []
             use_ai = bool(task["options"].get("ai_layout", True)) and self.ai.supports_vision
+            layout_ai_success = 0
+            layout_ai_failed = 0
             for index, page in enumerate(pages, 1):
                 image = read_image(page["path"])
                 prior_layout = existing_pages.get(page["page_number"], {}).get("layout")
                 proposal = prior_layout or self.layout.propose(image, page["page_number"])
-                if use_ai and prior_layout is None:
+                if use_ai and (prior_layout is None or prior_layout.get("source") != "user-reviewed"):
                     try:
                         enriched = self.ai.enrich_layout(page["path"], proposal)
                         enriched["regions"] = self.layout.normalize_regions(enriched.get("regions", proposal["regions"]))
                         proposal = enriched
                         proposal["source"] = "ai+computer-vision"
+                        layout_ai_success += 1
                     except Exception as error:
+                        layout_ai_failed += 1
                         warnings.append(f"Page {page['page_number']} AI layout review failed: {error}")
                 page_record = {
                     "page_number": page["page_number"],
@@ -80,6 +85,11 @@ class DocumentWorkflow:
                 warnings=warnings,
                 progress={"current": len(pages), "total": len(pages), "message": "请检查并确认 OCR 窗口"},
             )
+            task["layout_quality"] = {
+                "mode": "vision-reviewed" if layout_ai_success else "computer-vision-fallback",
+                "vision_succeeded": layout_ai_success,
+                "vision_failed": layout_ai_failed,
+            }
             if max_pages_override:
                 task["options"]["layout_expanded"] = True
             self.store.save(task)
@@ -153,11 +163,32 @@ class DocumentWorkflow:
                     if not write_image(crop_path, crop):
                         raise RuntimeError(f"Cannot save OCR crop: {crop_path.name}")
                     recognition = self.ocr.recognize(prepared, region["direction"])
+                    visual = None
+                    vision_error = None
+                    if self.ai.supports_vision and hasattr(self.ai, "transcribe_region"):
+                        try:
+                            visual = self.ai.transcribe_region(crop_path, region, page["page_number"])
+                        except Exception as error:
+                            vision_error = str(error)
+                    visual_text = visual["text"] if visual else ""
+                    chosen_text = visual_text if visual_text else recognition["full_text"]
+                    disagreements = self._texts_disagree(visual_text, recognition["full_text"]) if visual_text else False
+                    quality = recognition.get("quality", {"status": "unknown", "score": recognition["confidence"], "flags": []})
+                    if visual and visual.get("text"):
+                        visual_confidence = float(visual.get("confidence") or 0)
+                        quality = {
+                            "status": "needs_review" if visual.get("uncertain") or disagreements else ("check" if visual_confidence < 0.75 else "pass"),
+                            "score": round(visual_confidence, 4),
+                            "flags": (["vision-uncertain"] if visual.get("uncertain") else []) + (["ocr-disagreement"] if disagreements else []),
+                        }
                     page_regions.append({
                         "region_id": region["id"], "order": region["order"], "label": region["label"],
                         "article_id": region["article_id"], "direction": region["direction"], "bbox": region["bbox"],
-                        "pixel_bbox": pixel_box, "raw_text": recognition["full_text"],
-                        "confidence": recognition["confidence"], "quality": recognition.get("quality", {"status": "unknown", "score": recognition["confidence"], "flags": []}),
+                        "pixel_bbox": pixel_box, "raw_text": recognition["full_text"], "visual_text": visual["text"] if visual else "",
+                        "final_region_text": chosen_text, "visual_confidence": visual.get("confidence") if visual else None,
+                        "visual_uncertain": visual.get("uncertain", "") if visual else "",
+                        "vision_error": vision_error,
+                        "confidence": recognition["confidence"], "quality": quality,
                         "text_blocks": recognition["text_blocks"],
                         "crop_url": f"/api/tasks/{task_id}/crops/{crop_path.name}",
                     })
@@ -165,7 +196,8 @@ class DocumentWorkflow:
                     task["progress"] = {"current": completed, "total": regions_total, "message": f"正在识别第 {page['page_number']} 页窗口 {region['order']}"}
                     self.store.save(task)
                 page_text = "\n\n".join(item["raw_text"] for item in page_regions if item["raw_text"])
-                page_results[page["page_number"]] = {"page_number": page["page_number"], "regions": page_regions, "raw_text": page_text}
+                visual_page_text = "\n\n".join(item["final_region_text"] for item in sorted(page_regions, key=lambda item: item["order"]) if item["final_region_text"])
+                page_results[page["page_number"]] = {"page_number": page["page_number"], "regions": page_regions, "raw_text": page_text, "visual_text": visual_page_text}
                 result = self._save_ocr_result(task_id, list(page_results.values()))
                 task["ocr"] = {
                     "pages": len(result["pages"]), "regions": sum(len(item["regions"]) for item in result["pages"]),
@@ -175,13 +207,16 @@ class DocumentWorkflow:
                 self.store.save(task)
 
             result = self._save_ocr_result(task_id, list(page_results.values()))
+            visual_regions = sum(1 for page in result["pages"] for region in page["regions"] if region.get("visual_text"))
+            vision_failures = sum(1 for page in result["pages"] for region in page["regions"] if region.get("vision_error"))
             task.update(
                 status="ocr_ready", stage="ocr", ocr={
                     "pages": len(result["pages"]), "regions": sum(len(item["regions"]) for item in result["pages"]),
                     "completed_pages": [item["page_number"] for item in result["pages"]], "requested_pages": requested,
                     "result_url": f"/api/tasks/{task_id}/ocr",
                 },
-                progress={"current": regions_total, "total": regions_total, "message": "OCR 完成，可以进行 AI 校正"},
+                recognition_quality={"vision_regions": visual_regions, "vision_failures": vision_failures, "mode": "vision-primary-with-local-crosscheck" if visual_regions else "local-ocr-fallback"},
+                progress={"current": regions_total, "total": regions_total, "message": "识别完成，可查看视觉转录与本地 OCR 对照"},
             )
             self.store.save(task)
         except Exception as error:
@@ -215,11 +250,14 @@ class DocumentWorkflow:
             self.store.save(task)
             for index, page in enumerate(raw_pages, 1):
                 page_image = self.store.task_dir(task_id) / "pages" / f"page_{page['page_number']:03d}.png"
-                try:
-                    corrected = self.ai.correct_page(page["page_number"], page["regions"], page.get("raw_text", ""), page_image=page_image)
-                except TypeError:
-                    # Keep compatibility with lightweight/custom AI adapters.
-                    corrected = self.ai.correct_page(page["page_number"], page["regions"], page.get("raw_text", ""))
+                if hasattr(self.ai, "compose_page") and any(region.get("visual_text") for region in page["regions"]):
+                    corrected = self.ai.compose_page(page["page_number"], page["regions"], page.get("raw_text", ""))
+                    corrected["transcription_mode"] = "vision-regions+text-compose"
+                else:
+                    try:
+                        corrected = self.ai.correct_page(page["page_number"], page["regions"], page.get("raw_text", ""), page_image=page_image)
+                    except TypeError:
+                        corrected = self.ai.correct_page(page["page_number"], page["regions"], page.get("raw_text", ""))
                 corrected["page_number"] = page["page_number"]
                 corrected_by_page[page["page_number"]] = corrected
                 result = self._save_corrected_result(task_id, list(corrected_by_page.values()), raw)
@@ -308,6 +346,17 @@ class DocumentWorkflow:
             raise ValueError("OCR region has an empty bounding box")
         return image[y1:y2, x1:x2], {"x": x1, "y": y1, "width": x2 - x1, "height": y2 - y1}
 
+    @staticmethod
+    def _texts_disagree(left: str, right: str) -> bool:
+        left_chars = "".join((left or "").split())
+        right_chars = "".join((right or "").split())
+        if not left_chars or not right_chars:
+            return bool(left_chars or right_chars)
+        if left_chars == right_chars:
+            return False
+        matcher = SequenceMatcher(None, left_chars, right_chars)
+        return 1.0 - matcher.ratio() > 0.18
+
     def _write_json(self, task_id: str, name: str, value: Dict):
         path = self.store.task_dir(task_id) / name
         temp = path.with_suffix(path.suffix + ".tmp")
@@ -350,3 +399,53 @@ class DocumentWorkflow:
             self.store.save(task)
         except Exception:
             pass
+
+    def generate_final_document(self, task_id: str, format: str = 'markdown') -> str:
+        """Generate a structured final document from OCR results.
+
+        Args:
+            task_id: Task identifier
+            format: Output format ('markdown' or 'html')
+
+        Returns:
+            Path to generated document
+        """
+        from document_composer import DocumentComposer
+
+        task = self.store.load(task_id)
+
+        # Get OCR or corrected results
+        try:
+            result = self._read_json(task_id, "corrected.json")
+        except FileNotFoundError:
+            result = self._read_json(task_id, "ocr.json")
+
+        composer = DocumentComposer()
+
+        if format == 'html':
+            content = composer.compose_html(task, result['pages'])
+            extension = 'html'
+        else:
+            content = composer.compose_markdown(task, result['pages'])
+            extension = 'md'
+
+        output_path = self.store.task_dir(task_id) / f"final_document.{extension}"
+        output_path.write_text(content, encoding='utf-8')
+
+        return str(output_path)
+
+    def validate_quality(self, task_id: str) -> Dict:
+        """Validate OCR quality and completeness.
+
+        Args:
+            task_id: Task identifier
+
+        Returns:
+            Validation report
+        """
+        from quality_validator import QualityValidator
+
+        task = self.store.load(task_id)
+        validator = QualityValidator(target_accuracy=0.95)
+
+        return validator.validate_task(task)

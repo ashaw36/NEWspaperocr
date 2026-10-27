@@ -8,10 +8,18 @@ if "%~1"=="" (
 )
 set "OUTPUT_DIR=%~2"
 if "%OUTPUT_DIR%"=="" set "OUTPUT_DIR=results_cli"
+set "PYTHON_EXE=%~dp0backend\.venv\Scripts\python.exe"
+if not exist "%PYTHON_EXE%" (
+    echo [错误] PaddleOCR环境尚未安装，请先运行“安装PaddleOCR.bat”。
+    pause
+    exit /b 1
+)
+set "OCR_BACKEND=paddleocr"
+set "OCR_PADDLE_VERSION=PP-OCRv5"
 cd /d "%~dp0backend"
 if "%~3"=="" (
-    py process_newspaper.py "%~1" -o "%OUTPUT_DIR%"
+    "%PYTHON_EXE%" process_newspaper.py "%~1" -o "%OUTPUT_DIR%"
 ) else (
-    py process_newspaper.py "%~1" -o "%OUTPUT_DIR%" -p "%~3"
+    "%PYTHON_EXE%" process_newspaper.py "%~1" -o "%OUTPUT_DIR%" -p "%~3"
 )
 pause

@@ -198,8 +198,10 @@
           <button class="tab" data-tab="analysis">研究分析</button>
         </div>
         <div class="tab-content" id="rawPanel">
+          <div class="ai-notice" id="layoutQualityNotice" hidden></div>
           <div class="text-actions"><strong id="rawPageLabel">当前页原始 OCR</strong><button id="saveRawText" disabled>保存人工修订</button><span class="inline-note" id="rawHint">等待当前页 OCR</span></div>
           <textarea class="text-editor" id="rawText" aria-label="当前页原始 OCR 文本" placeholder="当前页完成 OCR 后可在此人工修订" disabled></textarea>
+          <div class="correction-details" id="regionResults"></div>
         </div>
         <div class="tab-content" id="correctedPanel" hidden>
           <div class="ai-notice" id="aiNotice"></div>
@@ -450,10 +452,28 @@
       $('rawPageLabel').textContent=`第 ${pageNumber} 页原始 OCR`;
       $('rawText').value=rawPage?.raw_text||''; $('rawText').disabled=!rawPage; $('saveRawText').disabled=!rawPage;
       $('rawHint').textContent=rawPage?(rawPage.manually_edited?'已保存人工修订':'可以直接修改并保存；AI 校正会使用修订后的文本'):(state.task?.status==='ocr_running'?'当前页尚在等待或识别中':'当前页尚未 OCR');
+      const layoutQuality=state.task?.layout_quality, layoutNotice=$('layoutQualityNotice');
+      layoutNotice.hidden=!layoutQuality;
+      layoutNotice.textContent=layoutQuality?.mode==='computer-vision-fallback'?'版面 AI 复核未成功，当前使用本地自动布局建议。请重点检查刊头、标题、栏间顺序和窗口范围。':(layoutQuality?.vision_failed?'部分页面版面 AI 复核失败，失败页面使用本地布局建议。':'');
+      renderRegionResults(rawPage);
       $('correctedPageLabel').textContent=`第 ${pageNumber} 页 AI 校正稿`;
       $('correctedText').value=correctedPage?.corrected_text||''; $('correctedText').disabled=!correctedPage; $('saveCorrectedText').disabled=!correctedPage;
       $('correctedHint').textContent=correctedPage?(correctedPage.manually_edited?'已保存人工定稿':'可继续修改，保存后用于总结与分析'):'当前页尚未进行 AI 语义校正';
       renderCorrectionDetails(correctedPage); renderRegionList();
+    }
+    function renderRegionResults(page){
+      const panel=$('regionResults'); panel.textContent=''; if(!page)return;
+      const lines=[];
+      for(const region of [...(page.regions||[])].sort((a,b)=>a.order-b.order)){
+        const status=region.quality?.status==='needs_review'?'待复核':region.quality?.status==='check'?'需检查':'候选';
+        lines.push(`窗口 ${region.order} · ${labels[region.label]||region.label} · ${status}`);
+        if(region.visual_text) lines.push(`视觉转录：${region.visual_text}`);
+        if(region.raw_text) lines.push(`本地 OCR：${region.raw_text}`);
+        if(region.visual_uncertain) lines.push(`不确定字：${region.visual_uncertain}`);
+        if(region.vision_error) lines.push(`视觉识别未完成：${region.vision_error}`);
+        lines.push('');
+      }
+      panel.textContent=lines.join('\n');
     }
     function renderCorrectionDetails(page){
       const details=$('correctionDetails'); details.textContent=''; if(!page)return;

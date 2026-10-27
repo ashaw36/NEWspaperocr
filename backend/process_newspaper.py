@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -21,6 +22,8 @@ def main():
     parser.add_argument("-p", "--pages", type=int, help="Maximum number of pages")
     parser.add_argument("--dpi", type=int, default=180, choices=range(100, 301), metavar="100-300")
     parser.add_argument("--gpu", action="store_true", help="Request GPU when the selected OCR backend supports it")
+    parser.add_argument("--ocr-backend", choices=("auto", "paddleocr", "rapidocr"), default=os.getenv("OCR_BACKEND", "auto"))
+    parser.add_argument("--paddle-version", choices=("PP-OCRv5", "PP-OCRv6"), default=os.getenv("OCR_PADDLE_VERSION", "PP-OCRv5"))
     parser.add_argument("--ai-layout", action="store_true", help="Use a configured vision model to review layout proposals")
     parser.add_argument("--ai-correct", action="store_true", help="Run semantic correction after OCR")
     args = parser.parse_args()
@@ -30,7 +33,8 @@ def main():
         parser.error(f"Source file does not exist: {source}")
 
     store = TaskStore(Path(args.output).resolve())
-    ocr, ai = OCREngine(use_gpu=args.gpu), AIService()
+    ocr = OCREngine(use_gpu=args.gpu, backend=args.ocr_backend, paddle_version=args.paddle_version)
+    ai = AIService()
     if not ocr.engine_ready:
         parser.error(ocr.load_error or "OCR backend is unavailable")
     if (args.ai_layout or args.ai_correct) and not ai.available:

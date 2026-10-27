@@ -5,14 +5,24 @@ echo 古报纸OCR识别系统 - 一键启动
 echo ================================================================================
 echo.
 
-cd /d "%~dp0backend"
+set "ROOT=%~dp0"
+set "PYTHON_EXE=%ROOT%backend\.venv\Scripts\python.exe"
+if not exist "%PYTHON_EXE%" (
+    echo [错误] PaddleOCR环境尚未安装，请先运行“安装PaddleOCR.bat”。
+    pause
+    exit /b 1
+)
+set "OCR_BACKEND=paddleocr"
+set "OCR_PADDLE_VERSION=PP-OCRv5"
+
+cd /d "%ROOT%backend"
 
 echo [1/2] 正在启动后端服务...
-start "古报纸OCR后端" cmd /k "py app.py"
+start "古报纸OCR后端" cmd /k ""%PYTHON_EXE%" app.py"
 timeout /t 3 >nul
 
 echo [2/2] 正在启动前端服务...
-cd ..\frontend
+cd /d "%ROOT%frontend"
 start "古报纸OCR前端" cmd /k "py -m http.server 8080"
 timeout /t 2 >nul
 

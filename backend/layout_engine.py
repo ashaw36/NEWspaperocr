@@ -22,7 +22,11 @@ class LayoutEngine:
 
         height, width = image.shape[:2]
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
-        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+        # Newspaper line art and dense text react differently to a single
+        # threshold. Build connected regions from a lightly cleaned, locally
+        # normalized image and use the original resolution for final boxes.
+        normalized = cv2.createCLAHE(clipLimit=1.4, tileGridSize=(12, 12)).apply(gray)
+        blurred = cv2.GaussianBlur(normalized, (3, 3), 0)
         _, ink = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         ink = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
 
@@ -47,10 +51,16 @@ class LayoutEngine:
             boxes = [content]
 
         boxes = self._deduplicate(boxes, width, height)
+        if direction == "vertical-rtl":
+            boxes = self._split_oversized_vertical_regions(boxes, ink, width, height)
         regions = [self._region(box, width, height, direction, layout_type, ink, page_number) for box in boxes]
         regions = self.sort_regions(regions, direction, layout_type)
         for order, region in enumerate(regions, 1):
             region["order"] = order
+
+        # Structural labels and article grouping are intentionally conservative:
+        # geometry cannot reliably infer semantic article boundaries.
+        self._label_vertical_regions(regions, width, height)
 
         return {
             "layout_type": layout_type,
@@ -130,8 +140,8 @@ class LayoutEngine:
 
     def _group_columns(self, boxes: Sequence[Box], width: int, height: int) -> List[Box]:
         """Combine narrow neighboring columns into OCR windows with enough visual context."""
-        wide = [box for box in boxes if box[2] >= width * 0.11]
-        narrow = [box for box in boxes if box[2] < width * 0.11]
+        wide = [box for box in boxes if box[2] >= width * 0.16]
+        narrow = [box for box in boxes if box[2] < width * 0.16]
         partitions = [
             sorted((box for box in narrow if box[3] >= height * 0.25), key=lambda box: -box[0]),
             sorted((box for box in narrow if box[3] < height * 0.25), key=lambda box: -box[0]),
@@ -152,7 +162,7 @@ class LayoutEngine:
                 overlap = max(0, min(gy2, y + h) - max(gy1, y)) / max(1, min(gy2 - gy1, h))
                 gap = max(0, gx1 - (x + w))
                 combined_width = gx2 - min(gx1, x)
-                if overlap >= 0.55 and gap <= width * 0.025 and combined_width <= width * 0.24 and len(current) < 6:
+                if overlap >= 0.68 and gap <= width * 0.012 and combined_width <= width * 0.18 and len(current) < 3:
                     current.append(box)
                 else:
                     partition_groups.append([box])
@@ -166,6 +176,49 @@ class LayoutEngine:
             y2 = max(box[1] + box[3] for box in group)
             merged.append(self._pad((x1, y1, x2 - x1, y2 - y1), width, height))
         return wide + merged
+
+    def _split_oversized_vertical_regions(self, boxes: Sequence[Box], ink: np.ndarray, width: int, height: int) -> List[Box]:
+        """Split merged vertical regions at strong whitespace gutters."""
+        result: List[Box] = []
+        for x, y, w, h in boxes:
+            if w < width * 0.19:
+                result.append((x, y, w, h))
+                continue
+            projection = np.count_nonzero(ink[y:y + h, x:x + w], axis=0)
+            smooth = cv2.GaussianBlur(projection.astype(np.float32).reshape(1, -1), (1, 0), 0).ravel()
+            baseline = max(1.0, float(np.percentile(smooth, 55)))
+            valleys = np.flatnonzero(smooth < baseline * 0.18)
+            cuts = []
+            if valleys.size:
+                groups = np.split(valleys, np.where(np.diff(valleys) > max(2, int(width * 0.004)))[0] + 1)
+                for group in groups:
+                    if group.size >= max(3, int(width * 0.006)):
+                        center = int((group[0] + group[-1]) / 2)
+                        if w * 0.18 < center < w * 0.82:
+                            cuts.append(center)
+            boundaries = [0] + cuts + [w]
+            pieces = [(x + left, y, right - left, h) for left, right in zip(boundaries, boundaries[1:]) if right - left >= width * 0.045]
+            if len(pieces) > 1:
+                result.extend(self._pad(piece, width, height) for piece in pieces)
+            else:
+                result.append((x, y, w, h))
+        return self._deduplicate(result, width, height)
+
+    def _label_vertical_regions(self, regions: List[Dict], width: int, height: int) -> None:
+        ordered = sorted(regions, key=lambda region: -region["bbox"]["x"])
+        for index, region in enumerate(ordered, 1):
+            box = region["bbox"]
+            x, y, w, h = box["x"], box["y"], box["width"], box["height"]
+            if x > 0.57 and w > 0.15 and y < 0.12 and h > 0.36:
+                region["label"] = "masthead"
+            elif w > 0.1 and h < 0.35 and (y > 0.58 or w > 0.18):
+                region["label"] = "title"
+            elif y > 0.86 and h < 0.14:
+                region["label"] = "metadata"
+            else:
+                region["label"] = "body"
+            region["article_id"] = f"page-{region.get('page_number', 'x')}-article-{index}"
+            region["notes"] = "自动布局建议；请确认跨栏标题和文章分组"
 
     def _grid_cells(self, ink: np.ndarray, width: int, height: int) -> List[Box]:
         horizontal = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(40, width // 5), 2)))

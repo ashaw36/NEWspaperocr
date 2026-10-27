@@ -80,18 +80,50 @@ class AIService:
         return {"available": self.available, "backend": self.backend, "model": self.model, "vision": self.supports_vision, "error": self.error}
 
     def enrich_layout(self, image_path: str | Path, layout: Dict) -> Dict:
-        prompt = f"""You are planning OCR windows for a historical Chinese newspaper page.
-Review the image and computer-vision proposal. Return JSON only. Keep normalized coordinates between 0 and 1.
-Correct missing, overlapping or badly split windows. Every region must contain id, order, label, article_id,
-direction, bbox, confidence and notes. Allowed labels: masthead, title, subtitle, body, caption, metadata,
-advertisement, ignore. Allowed directions: vertical-rtl, horizontal-ltr. Order must reflect historical reading
-order. Group related title and body regions with article_id. Do not transcribe the page yet.
+        prompt = f"""Analyze the attached historical Chinese newspaper page. Image evidence is primary.
+Return one JSON object with layout_type, reading_direction and regions. Coordinates must be normalized 0..1.
+Create tight, non-overlapping regions for distinct visual units. Keep every ordinary vertical text column separate;
+do not merge neighboring columns. Split masthead, date/publication details, headline, contents panel and body columns.
+Use right-to-left column reading order, top-to-bottom within each vertical column. Do not assign the whole page to one
+article: use a new article_id when a clear headline or visual divider starts a new item; otherwise use a shared ID only
+for continuous article columns. Allowed labels: masthead, title, subtitle, body, caption, metadata, advertisement,
+ignore. Allowed directions: vertical-rtl, horizontal-ltr. Return at most 24 regions. Include id, order, label,
+article_id, direction, bbox, confidence and notes for every region.
 
-Proposal:
+Computer-vision proposal for reference only:
 {json.dumps(layout, ensure_ascii=False)}
 
-Return {{"layout_type":"...","reading_direction":"...","regions":[...]}}"""
-        return self._vision_json(image_path, prompt)
+Return {{"layout_type":"vertical-columns|mixed|grid|horizontal-rows","reading_direction":"vertical-rtl|horizontal-ltr","regions":[...]}}"""
+        return self._vision_json(image_path, prompt, max_tokens=6000)
+
+    def transcribe_region(self, image_path: str | Path, region: Dict, page_number: int) -> Dict:
+        prompt = f"""Transcribe only this crop from page {page_number} of a 1945 traditional-Chinese newspaper.
+Read the image directly. Preserve traditional characters, historical spelling, punctuation and line/column order.
+Do not modernize, paraphrase, repair based on general knowledge or invent text outside the crop.
+The crop label is {region.get('label')} and direction is {region.get('direction')}.
+Return JSON only: {{"text":"verbatim transcription","uncertain":"characters or short spans you cannot read","confidence":0.0}}.
+Use □ for an unreadable individual character. If the crop is not text, return an empty text string."""
+        result = self._vision_json(image_path, prompt, max_tokens=2200)
+        result["text"] = str(result.get("text", "")).strip()
+        result["uncertain"] = str(result.get("uncertain", "")).strip()
+        try:
+            result["confidence"] = min(1.0, max(0.0, float(result.get("confidence", 0.0))))
+        except (TypeError, ValueError):
+            result["confidence"] = 0.0
+        return result
+
+    def compose_page(self, page_number: int, regions: List[Dict], page_text: str = "") -> Dict:
+        prompt = f"""Compose the verified visual transcriptions of page {page_number} into readable historical newspaper text.
+Preserve every source character and traditional form. Do not add text not present in region transcriptions. Use region order
+and article_id to combine columns. Keep unresolved □ and list uncertainty rather than guessing. Return JSON only with
+corrected_text, articles (id,title,text), corrections (region_id,original,corrected,reason,confidence), and warnings.
+
+Region evidence:
+{json.dumps(regions, ensure_ascii=False)}
+
+Local OCR is a secondary candidate only; use it to flag conflicts, not overwrite clear visual readings:
+{page_text}"""
+        return self._text_json(prompt, max_tokens=5000)
 
     def correct_page(self, page_number: int, regions: List[Dict], page_text: str = "", page_image: str | Path | None = None) -> Dict:
         compact = [{
@@ -150,7 +182,7 @@ Document:
     def _vision_json(self, image_path: str | Path, prompt: str, max_tokens: int = 5000) -> Dict:
         self._require_client()
         path = Path(image_path)
-        media_type, encoded = self._encode_vision_image(path)
+        media_type, encoded = self._encode_vision_image(path, max_dimension=2200 if "Transcribe only this crop" in prompt else 1800)
         if self.backend == "anthropic":
             response = self.client.messages.create(model=self.model, max_tokens=max_tokens, messages=[{
                 "role": "user", "content": [
@@ -167,24 +199,30 @@ Document:
                     {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{encoded}"}},
                 ]}],
             }
-            # DeepSeek Flash supports vision but its vision guide does not require
-            # JSON mode, so rely on the JSON-only prompt and tolerant parsing.
-            if self.backend != "deepseek":
-                options["response_format"] = {"type": "json_object"}
             options["max_tokens"] = max_tokens
-            response = self.client.chat.completions.create(**options)
+            try:
+                response = self.client.chat.completions.create(**options)
+            except Exception:
+                if self.backend != "deepseek":
+                    raise
+                # The vision endpoint may not support JSON mode. Some compatible
+                # deployments still support it, so retry only if the first call
+                # failed for a request-level reason.
+                options["response_format"] = {"type": "json_object"}
+                response = self.client.chat.completions.create(**options)
             content = response.choices[0].message.content
         return self._parse_json(content, model=self.vision_model or self.model)
 
-    def _encode_vision_image(self, path: Path) -> tuple[str, str]:
+    def _encode_vision_image(self, path: Path, max_dimension: int = 2400) -> tuple[str, str]:
         """Bound image dimensions/bytes before sending a page to a vision model."""
         try:
             from PIL import Image
             with Image.open(path) as image:
                 image = image.convert("RGB")
-                max_dimension = 1800
-                scale = min(1.0, max_dimension / max(image.size))
-                if scale < 1.0:
+                # Avoid shrinking small text crops; enlarge to a useful reading
+                # size when the source crop is low-resolution.
+                scale = min(2.0, max_dimension / max(image.size))
+                if abs(scale - 1.0) > 0.03:
                     image = image.resize((max(1, int(image.width * scale)), max(1, int(image.height * scale))), Image.LANCZOS)
                 buffer = io.BytesIO()
                 image.save(buffer, format="JPEG", quality=82, optimize=True)

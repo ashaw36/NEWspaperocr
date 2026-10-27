@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import inspect
+import json
+import os
+import threading
 from pathlib import Path
 from typing import Dict, List
 
@@ -18,28 +22,71 @@ class OCRExecutionError(RuntimeError):
 
 
 class OCREngine:
-    def __init__(self, use_gpu: bool = False):
+    def __init__(self, use_gpu: bool = False, backend: str = "auto", paddle_version: str | None = None):
         self.use_gpu = use_gpu
+        self.requested_backend = backend.strip().lower()
+        self.paddle_version = paddle_version or os.getenv("OCR_PADDLE_VERSION", "PP-OCRv5")
+        self._paddle_lock = threading.Lock()
         self.backend = "unavailable"
         self.engine_ready = False
         self.ocr = None
         self.load_error = None
-        try:
-            from rapidocr_onnxruntime import RapidOCR
-            self.ocr = RapidOCR()
-            self.backend = "rapidocr"
-            self.engine_ready = True
-        except Exception as rapid_error:
+        if self.requested_backend not in {"auto", "paddleocr", "rapidocr"}:
+            self.load_error = f"Unsupported OCR backend: {backend}"
+            return
+
+        candidates = ("paddleocr", "rapidocr") if self.requested_backend == "auto" else (self.requested_backend,)
+        errors = []
+        for candidate in candidates:
             try:
-                from paddleocr import PaddleOCR
-                self.ocr = PaddleOCR(use_angle_cls=True, lang="ch", use_gpu=use_gpu, show_log=False)
-                self.backend = "paddleocr"
+                if candidate == "paddleocr":
+                    self._load_paddle()
+                else:
+                    self._load_rapid()
+                self.backend = candidate
                 self.engine_ready = True
-            except Exception as paddle_error:
-                self.load_error = f"RapidOCR: {rapid_error}; PaddleOCR: {paddle_error}"
+                break
+            except Exception as error:
+                errors.append(f"{candidate}: {error}")
+
+        if not self.engine_ready:
+            self.load_error = "; ".join(errors)
+
+    def _load_paddle(self) -> None:
+        from paddleocr import PaddleOCR
+
+        parameters = inspect.signature(PaddleOCR).parameters
+        if "ocr_version" in parameters:
+            self.ocr = PaddleOCR(
+                lang="ch",
+                ocr_version=self.paddle_version,
+                device="gpu:0" if self.use_gpu else "cpu",
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False,
+            )
+        else:
+            self.ocr = PaddleOCR(
+                use_angle_cls=True,
+                lang="ch",
+                use_gpu=self.use_gpu,
+                show_log=False,
+            )
+
+    def _load_rapid(self) -> None:
+        from rapidocr_onnxruntime import RapidOCR
+
+        self.ocr = RapidOCR()
 
     def health(self) -> Dict:
-        return {"backend": self.backend, "ready": self.engine_ready, "gpu_requested": self.use_gpu, "error": self.load_error}
+        return {
+            "backend": self.backend,
+            "requested_backend": self.requested_backend,
+            "ready": self.engine_ready,
+            "gpu_requested": self.use_gpu,
+            "model_version": self.paddle_version if self.backend == "paddleocr" else None,
+            "error": self.load_error,
+        }
 
     def recognize(self, image: np.ndarray | str | Path, direction: str = "horizontal-ltr") -> Dict:
         if not self.engine_ready:
@@ -49,8 +96,13 @@ class OCREngine:
             if self.backend == "rapidocr":
                 raw, _ = self.ocr(source)
                 blocks = self._rapid_blocks(raw or [])
+            elif callable(getattr(self.ocr, "predict", None)):
+                with self._paddle_lock:
+                    raw = self.ocr.predict(source)
+                blocks = self._paddle_v3_blocks(raw)
             else:
-                raw = self.ocr.ocr(source, cls=True)
+                with self._paddle_lock:
+                    raw = self.ocr.ocr(source, cls=True)
                 blocks = self._paddle_blocks(raw[0] if raw and raw[0] else [])
         except Exception as error:
             raise OCRExecutionError(str(error)) from error
@@ -88,6 +140,54 @@ class OCREngine:
         for index, item in enumerate(raw, 1):
             bbox, result = item
             blocks.append({"block_id": index, "text": str(result[0]), "confidence": float(result[1]), "bbox": [[float(p[0]), float(p[1])] for p in bbox]})
+        return blocks
+
+    def _paddle_v3_blocks(self, raw: List) -> List[Dict]:
+        if isinstance(raw, (dict, str)) or hasattr(raw, "json"):
+            raw = [raw]
+
+        blocks = []
+        for item in raw or []:
+            payload = getattr(item, "json", item)
+            if callable(payload):
+                payload = payload()
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            if not isinstance(payload, dict):
+                continue
+
+            payload = payload.get("res", payload)
+            texts = payload.get("rec_texts")
+            scores = payload.get("rec_scores")
+            texts = [] if texts is None else texts
+            scores = [] if scores is None else scores
+            polygons = payload.get("rec_polys")
+            if polygons is None:
+                polygons = payload.get("dt_polys")
+            if polygons is None:
+                polygons = payload.get("rec_boxes")
+            if polygons is None:
+                continue
+
+            for index, text in enumerate(texts):
+                if index >= len(polygons) or not str(text).strip():
+                    continue
+                points = np.asarray(polygons[index], dtype=np.float32)
+                if points.ndim == 1 and points.size == 4:
+                    left, top, right, bottom = points.tolist()
+                    points = np.asarray(
+                        [[left, top], [right, top], [right, bottom], [left, bottom]],
+                        dtype=np.float32,
+                    )
+                if points.ndim != 2 or points.shape[1] < 2:
+                    continue
+                confidence = float(scores[index]) if index < len(scores) else 0.0
+                blocks.append({
+                    "block_id": len(blocks) + 1,
+                    "text": str(text),
+                    "confidence": confidence,
+                    "bbox": [[float(point[0]), float(point[1])] for point in points],
+                })
         return blocks
 
     def _sort(self, blocks: List[Dict], direction: str) -> List[Dict]:

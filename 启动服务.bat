@@ -1,6 +1,16 @@
 @echo off
 chcp 65001 >nul
 title 古报纸OCR系统 - 启动服务
+set "ROOT=%~dp0"
+set "PYTHON_EXE=%ROOT%backend\.venv\Scripts\python.exe"
+
+if not exist "%PYTHON_EXE%" (
+    echo [错误] PaddleOCR环境尚未安装，请先运行“安装PaddleOCR.bat”。
+    pause
+    exit /b 1
+)
+set "OCR_BACKEND=paddleocr"
+set "OCR_PADDLE_VERSION=PP-OCRv5"
 
 echo ========================================
 echo   古报纸OCR系统 - 服务启动器
@@ -17,13 +27,13 @@ if %errorlevel% neq 0 (
 
 :: 启动后端服务
 echo [1/2] 正在启动后端服务 (端口5000)...
-cd /d "%~dp0backend"
-start "古报纸OCR-后端" cmd /k "py app.py"
+cd /d "%ROOT%backend"
+start "古报纸OCR-后端" cmd /k ""%PYTHON_EXE%" app.py"
 timeout /t 3 /nobreak >nul
 
 :: 启动前端服务
 echo [2/2] 正在启动前端服务 (端口8080)...
-cd /d "%~dp0frontend"
+cd /d "%ROOT%frontend"
 start "古报纸OCR-前端" cmd /k "py -m http.server 8080"
 timeout /t 2 /nobreak >nul
 
