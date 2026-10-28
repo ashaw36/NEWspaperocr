@@ -25,7 +25,16 @@ ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "bmp", "tif", "tiff"}
 
 app = Flask(__name__)
 app.config.update(MAX_CONTENT_LENGTH=100 * 1024 * 1024, JSON_AS_ASCII=False)
-CORS(app, resources={r"/api/*": {"origins": os.getenv("CORS_ORIGINS", "http://localhost:8080,http://127.0.0.1:8080").split(",")}})
+# Allow CORS from all origins including file:// protocol (for local HTML files)
+CORS(app, resources={
+    r"/api/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "expose_headers": ["Content-Type"],
+        "supports_credentials": False
+    }
+})
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 
 store = TaskStore(RESULT_ROOT)
@@ -38,7 +47,7 @@ for interrupted in store.list_recent(limit=1000):
         store.save(interrupted)
 ocr_engine = OCREngine(
     use_gpu=os.getenv("OCR_USE_GPU", "false").lower() == "true",
-    backend=os.getenv("OCR_BACKEND", "auto"),
+    backend=os.getenv("OCR_BACKEND", "rapidocr"),  # 强制使用 RapidOCR 避免 PaddleOCR 运行时错误
     paddle_version=os.getenv("OCR_PADDLE_VERSION", "PP-OCRv5"),
 )
 ai_service = AIService()
@@ -65,7 +74,8 @@ def public_task(task):
 
 @app.get("/")
 def index():
-    return jsonify({"service": "Historical Newspaper OCR Workflow", "version": "2.0", "health": "/api/health"})
+    """测试界面"""
+    return render_template("test_upload.html")
 
 
 @app.get("/demo.html")
@@ -108,7 +118,14 @@ def create_task():
     }
     task = store.create(upload.filename, options)
     extension = Path(upload.filename).suffix.lower()
-    filename = secure_filename(upload.filename) or f"source{extension}"
+    safe_name = secure_filename(upload.filename)
+    # secure_filename may strip all non-ASCII chars, leaving only the extension without a dot
+    # e.g. "返乡运动会.pdf" -> "pdf"
+    # Check if the result has no dot (meaning it's just the extension chars)
+    if not safe_name or "." not in safe_name:
+        filename = f"source{extension}"
+    else:
+        filename = safe_name
     upload_dir = UPLOAD_ROOT / task["id"]
     upload_dir.mkdir(parents=True, exist_ok=False)
     source_path = upload_dir / filename

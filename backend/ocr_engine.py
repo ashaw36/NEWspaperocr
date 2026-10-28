@@ -64,6 +64,7 @@ class OCREngine:
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
                 use_textline_orientation=False,
+                enable_mkldnn=False,  # Disable OneDNN to avoid "illegal instruction" error
             )
         else:
             self.ocr = PaddleOCR(
@@ -71,6 +72,7 @@ class OCREngine:
                 lang="ch",
                 use_gpu=self.use_gpu,
                 show_log=False,
+                enable_mkldnn=False,  # Disable OneDNN to avoid "illegal instruction" error
             )
 
     def _load_rapid(self) -> None:
