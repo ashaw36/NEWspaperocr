@@ -22,6 +22,10 @@ class AIResponseError(RuntimeError):
     pass
 
 
+class AIInsufficientBalanceError(AIResponseError):
+    pass
+
+
 class AIService:
     def __init__(self):
         load_dotenv()
@@ -97,7 +101,7 @@ Return {{"layout_type":"vertical-columns|mixed|grid|horizontal-rows","reading_di
         return self._vision_json(image_path, prompt, max_tokens=6000)
 
     def transcribe_region(self, image_path: str | Path, region: Dict, page_number: int) -> Dict:
-        prompt = f"""Transcribe only this crop from page {page_number} of a 1945 traditional-Chinese newspaper.
+        prompt = f"""Transcribe only this crop from page {page_number} of a historical traditional-Chinese newspaper.
 Read the image directly. Preserve traditional characters, historical spelling, punctuation and line/column order.
 Do not modernize, paraphrase, repair based on general knowledge or invent text outside the crop.
 The crop label is {region.get('label')} and direction is {region.get('direction')}.
@@ -132,7 +136,7 @@ Local OCR is a secondary candidate only; use it to flag conflicts, not overwrite
             "raw_text": region.get("raw_text", ""), "confidence": region.get("confidence", 0),
             "quality": region.get("quality", {}),
         } for region in regions]
-        prompt = f"""Proofread OCR from page {page_number} of a 1945 traditional-Chinese newspaper.
+        prompt = f"""Proofread OCR from page {page_number} of a historical traditional-Chinese newspaper.
 Use the page image as the primary evidence and the OCR text only as a draft. Use region order, labels, article grouping
 and semantics. Correct only characters supported by the image or strong context; preserve historical wording, traditional
 characters, names and uncertainty. Never silently modernize the text. Return JSON only with corrected_text, articles
@@ -148,6 +152,8 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
                 result = self._vision_json(page_image, prompt, max_tokens=6000)
                 result.setdefault("transcription_mode", "vision")
                 return result
+            except AIInsufficientBalanceError:
+                raise
             except Exception as error:
                 # Text correction remains a safe fallback when the vision
                 # provider is unavailable or rejects a large page image.
@@ -160,11 +166,13 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
         return result
 
     def summarize_document(self, text: str, instruction: str = "") -> Dict:
-        prompt = f"""Analyze this OCR transcription of a historical Chinese newspaper. Return JSON only with summary,
-key_points, people, organizations, places, dates, topics and uncertainties. Separate facts stated by the source from
-interpretation. User focus: {instruction or 'general overview'}.
+        prompt = f"""请分析下面这份中国历史报纸的 OCR 转录内容，并且所有面向用户的分析文字必须使用简体中文。
+无论原文或用户要求使用何种语言，summary、key_points、people、organizations、places、dates、topics 和
+uncertainties 中的内容都必须用简体中文表达；仅在引用原文、专有名词或无法翻译的人名地名时保留原文。
+只返回包含 summary、key_points、people、organizations、places、dates、topics、uncertainties 字段的 JSON。
+区分原文明确记载的事实与分析判断，不得补造信息。用户关注重点：{instruction or '整体概述'}。
 
-Document:
+报纸转录内容：
 {text[:80000]}"""
         return self._text_json(prompt, max_tokens=3500)
 
@@ -183,13 +191,14 @@ Document:
         self._require_client()
         path = Path(image_path)
         media_type, encoded = self._encode_vision_image(path, max_dimension=2200 if "Transcribe only this crop" in prompt else 1800)
+        prompt = f"{prompt}\nReturn json only as a single JSON object."
         if self.backend == "anthropic":
-            response = self.client.messages.create(model=self.model, max_tokens=max_tokens, messages=[{
+            response = self._call_provider(lambda: self.client.messages.create(model=self.model, max_tokens=max_tokens, messages=[{
                 "role": "user", "content": [
                     {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": encoded}},
                     {"type": "text", "text": prompt},
                 ]
-            }])
+            }]))
             content = response.content[0].text
         else:
             options = {
@@ -200,17 +209,22 @@ Document:
                 ]}],
             }
             options["max_tokens"] = max_tokens
+            if self.backend == "deepseek":
+                options["response_format"] = {"type": "json_object"}
+                options["extra_body"] = {"thinking": {"type": "disabled"}}
             try:
-                response = self.client.chat.completions.create(**options)
+                response = self._call_provider(lambda: self.client.chat.completions.create(**options))
+            except AIInsufficientBalanceError:
+                raise
             except Exception:
                 if self.backend != "deepseek":
                     raise
-                # The vision endpoint may not support JSON mode. Some compatible
-                # deployments still support it, so retry only if the first call
-                # failed for a request-level reason.
-                options["response_format"] = {"type": "json_object"}
-                response = self.client.chat.completions.create(**options)
+                options.pop("response_format", None)
+                options.pop("extra_body", None)
+                response = self._call_provider(lambda: self.client.chat.completions.create(**options))
             content = response.choices[0].message.content
+        if not isinstance(content, str) or not content.strip():
+            raise AIResponseError("The vision model returned an empty response")
         return self._parse_json(content, model=self.vision_model or self.model)
 
     def _encode_vision_image(self, path: Path, max_dimension: int = 2400) -> tuple[str, str]:
@@ -234,16 +248,39 @@ Document:
     def _text_json(self, prompt: str, max_tokens: int) -> Dict:
         self._require_client()
         if self.backend == "anthropic":
-            response = self.client.messages.create(model=self.model, max_tokens=max_tokens, messages=[{"role": "user", "content": prompt}])
+            response = self._call_provider(lambda: self.client.messages.create(model=self.model, max_tokens=max_tokens, messages=[{"role": "user", "content": prompt}]))
             content = response.content[0].text
         else:
-            response = self.client.chat.completions.create(
+            response = self._call_provider(lambda: self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
-            )
+            ))
             content = response.choices[0].message.content
         return self._parse_json(content, model=self.model)
+
+    def _call_provider(self, request):
+        try:
+            return request()
+        except Exception as error:
+            response = getattr(error, "response", None)
+            status_code = getattr(error, "status_code", None) or getattr(response, "status_code", None)
+            body = getattr(error, "body", None)
+            details = body.get("error", body) if isinstance(body, dict) else {}
+            provider_message = details.get("message", "") if isinstance(details, dict) else ""
+            error_code = details.get("code") if isinstance(details, dict) else None
+            error_text = f"{provider_message} {error}"
+            if status_code == 402 or error_code == "insufficient_balance_error" or "insufficient balance" in error_text.lower():
+                request_id = details.get("request_id") if isinstance(details, dict) else None
+                request_id = request_id or getattr(error, "request_id", None)
+                if not request_id:
+                    match = re.search(r"request[_ ]?id\s*[:=]\s*([A-Za-z0-9-]+)", error_text, re.IGNORECASE)
+                    request_id = match.group(1) if match else None
+                message = "AI 服务账户余额不足。请为当前 API 账户充值，或切换到余额充足的 AI 服务后重试。"
+                if request_id:
+                    message += f"请求编号：{request_id}。"
+                raise AIInsufficientBalanceError(message) from error
+            raise
 
     def _require_client(self):
         if not self.available:

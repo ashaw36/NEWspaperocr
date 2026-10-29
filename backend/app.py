@@ -12,7 +12,7 @@ from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 
-from ai_service import AIService, AIUnavailableError
+from ai_service import AIInsufficientBalanceError, AIService, AIUnavailableError
 from ocr_engine import OCREngine
 from task_store import TaskNotFoundError, TaskStore
 from workflow import DocumentWorkflow, WorkflowStateError
@@ -293,6 +293,11 @@ def task_not_found(_error):
 @app.errorhandler(AIUnavailableError)
 def workflow_error(error):
     return jsonify({"error": str(error)}), 409
+
+
+@app.errorhandler(AIInsufficientBalanceError)
+def ai_insufficient_balance(error):
+    return jsonify({"error": str(error), "code": "ai_insufficient_balance"}), 402
 
 
 @app.errorhandler(413)

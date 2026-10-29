@@ -9,6 +9,7 @@ from layout_engine import LayoutEngine
 from task_store import TaskStore
 from workflow import DocumentWorkflow, WorkflowStateError
 from ocr_engine import OCREngine, assess_quality, prepare_crop_for_ocr
+from ai_service import AIInsufficientBalanceError
 
 
 class FakeOCR:
@@ -196,6 +197,27 @@ class DocumentWorkflowTests(unittest.TestCase):
         saved = self.workflow.update_corrected_text(task_id, [{"page_number": 1, "corrected_text": "人工最终定稿"}])
         self.assertTrue(saved["pages"][0]["manually_edited"])
         self.assertIn("人工最终定稿", self.workflow.document_text(task_id))
+
+    def test_failed_ai_correction_keeps_ocr_text_available(self):
+        class BalanceLimitedAI(FakeAI):
+            def correct_page(self, page_number, regions, page_text=""):
+                raise AIInsufficientBalanceError("AI 服务账户余额不足")
+
+        self.workflow.ai = BalanceLimitedAI()
+        task_id = self.task["id"]
+        self.workflow.queue_ocr(task_id, [1])
+        self.workflow.run_ocr(task_id, [1])
+        self.workflow.queue_correction(task_id, [1])
+        self.workflow.run_correction(task_id, [1])
+
+        failed_task = self.store.load(task_id)
+        ocr_result = self.workflow.result(task_id, "ocr")
+        self.assertEqual("failed", failed_task["status"])
+        self.assertEqual("correction", failed_task["stage"])
+        self.assertIn("余额不足", failed_task["error"]["message"])
+        self.assertEqual([1], failed_task["ocr"]["completed_pages"])
+        self.assertTrue(ocr_result["full_text"])
+        self.assertTrue((self.store.task_dir(task_id) / "raw.txt").exists())
 
 
 if __name__ == "__main__":

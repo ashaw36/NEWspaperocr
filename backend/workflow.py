@@ -48,7 +48,7 @@ class DocumentWorkflow:
             existing_pages = {page["page_number"]: page for page in task.get("pages", [])}
             planned = []
             warnings = []
-            use_ai = bool(task["options"].get("ai_layout", True)) and self.ai.supports_vision
+            use_ai = bool(task["options"].get("ai_layout", True)) and getattr(self.ai, "supports_vision", False)
             layout_ai_success = 0
             layout_ai_failed = 0
             for index, page in enumerate(pages, 1):
@@ -165,7 +165,7 @@ class DocumentWorkflow:
                     recognition = self.ocr.recognize(prepared, region["direction"])
                     visual = None
                     vision_error = None
-                    if self.ai.supports_vision and hasattr(self.ai, "transcribe_region"):
+                    if getattr(self.ai, "supports_vision", False) and hasattr(self.ai, "transcribe_region"):
                         try:
                             visual = self.ai.transcribe_region(crop_path, region, page["page_number"])
                         except Exception as error:
@@ -446,6 +446,8 @@ class DocumentWorkflow:
         from quality_validator import QualityValidator
 
         task = self.store.load(task_id)
+        ocr_result_path = self.store.task_dir(task_id) / "ocr.json"
+        task["ocr_result"] = self._read_json(task_id, "ocr.json") if ocr_result_path.exists() else {"pages": []}
         validator = QualityValidator(target_accuracy=0.95)
 
         return validator.validate_task(task)

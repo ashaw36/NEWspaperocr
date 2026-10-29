@@ -20,7 +20,32 @@ class QualityValidator:
         Returns:
             Validation report with pass/fail status and details
         """
-        pages = task_data.get('pages', [])
+        ocr_pages = {
+            page['page_number']: page
+            for page in task_data.get('ocr_result', {}).get('pages', [])
+        }
+        pages = []
+        for task_page in task_data.get('pages', []):
+            page = dict(task_page)
+            layout = page.get('layout', {})
+            ocr_page = ocr_pages.get(page.get('page_number'), {})
+            regions = ocr_page.get('regions') or page.get('regions') or layout.get('regions', [])
+            page['regions'] = []
+            for source_region in regions:
+                region = dict(source_region)
+                region['validation_text'] = (
+                    region.get('final_region_text')
+                    or region.get('visual_text')
+                    or region.get('raw_text', '')
+                )
+                confidence = region.get('visual_confidence')
+                if confidence is None:
+                    confidence = region.get('quality', {}).get(
+                        'score', region.get('confidence', 0.0)
+                    )
+                region['validation_confidence'] = confidence
+                page['regions'].append(region)
+            pages.append(page)
 
         # Calculate metrics
         completeness = self._check_completeness(pages)
@@ -55,19 +80,19 @@ class QualityValidator:
 
         for page in pages:
             regions = page.get('regions', [])
-            total_regions += len(regions)
 
             for region in regions:
                 if region.get('label') == 'ignore':
                     continue
 
-                text = region.get('corrected_text') or region.get('raw_text', '')
+                total_regions += 1
+                text = region.get('corrected_text') or region.get('validation_text') or region.get('raw_text', '')
                 if text.strip():
                     processed_regions += 1
                 else:
                     empty_regions += 1
 
-        score = processed_regions / total_regions if total_regions > 0 else 0.0
+        score = processed_regions / total_regions if total_regions > 0 else 1.0
 
         return {
             'score': score,
@@ -91,11 +116,11 @@ class QualityValidator:
                 if region.get('label') == 'ignore':
                     continue
 
-                conf = region.get('confidence', 0.0)
+                conf = region.get('validation_confidence', region.get('confidence', 0.0))
                 if conf > 0:
                     confidence_scores.append(conf)
 
-                text = region.get('corrected_text') or region.get('raw_text', '')
+                text = region.get('corrected_text') or region.get('validation_text') or region.get('raw_text', '')
                 char_count += len(text)
                 uncertain_char_count += text.count('□')  # Placeholder for unreadable chars
 
@@ -135,7 +160,7 @@ class QualityValidator:
                 ai_enhanced_pages += 1
 
             # Check for layout issues
-            regions = page.get('regions', [])
+            regions = page.get('regions') or page.get('layout', {}).get('regions', [])
             if not regions:
                 layout_warnings.append({
                     'page': page.get('page_number'),

@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>文件上传测试</title>
+    <style>
+        body {
+            font-family: "Microsoft YaHei", sans-serif;
+            background: #0A0D12;
+            color: #e0e0e0;
+            padding: 40px;
+        }
+        .upload-box {
+            background: #161D2B;
+            padding: 40px;
+            border-radius: 12px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        button, input[type="file"] {
+            padding: 12px 24px;
+            font-size: 16px;
+            margin: 10px 0;
+        }
+        #log {
+            background: #0F131C;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .success { color: #6EE7B7; }
+        .error { color: #EF4444; }
+        .info { color: #38BDF8; }
+    </style>
+</head>
+<body>
+    <div class="upload-box">
+        <h1>古报纸OCR - 上传测试</h1>
+        <p>服务地址: <span class="info">http://127.0.0.1:5000</span></p>
+
+        <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg">
+        <button onclick="testUpload()">测试上传</button>
+        <button onclick="checkHealth()">检查服务状态</button>
+
+        <div id="log"></div>
+    </div>
+
+    <script>
+        // Use relative path when served from Flask, absolute when opened as file
+        const API_BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:5000/api' : '/api';
+        const logEl = document.getElementById('log');
+
+        function addLog(msg, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type;
+            logEl.innerHTML += `<span class="${className}">[${timestamp}] ${msg}</span>\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(msg);
+        }
+
+        async function checkHealth() {
+            addLog('检查服务健康状态...', 'info');
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                const data = await response.json();
+                addLog('服务状态: ' + JSON.stringify(data, null, 2), 'success');
+            } catch (error) {
+                addLog('服务检查失败: ' + error.message, 'error');
+            }
+        }
+
+        async function testUpload() {
+            const fileInput = document.getElementById('fileInput');
+            if (!fileInput.files || fileInput.files.length === 0) {
+                addLog('请先选择文件', 'error');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            addLog(`准备上传: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`, 'info');
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('ai_layout', 'true');
+
+            try {
+                addLog('开始上传...', 'info');
+                const response = await fetch(`${API_BASE}/tasks`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                addLog(`HTTP状态: ${response.status} ${response.statusText}`, 'info');
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    addLog('上传失败: ' + errorText, 'error');
+                    return;
+                }
+
+                const data = await response.json();
+                addLog('上传成功! 任务ID: ' + data.id, 'success');
+                addLog('完整响应: ' + JSON.stringify(data, null, 2), 'info');
+
+                // 开始轮询状态
+                await pollTaskStatus(data.id);
+
+            } catch (error) {
+                addLog('上传异常: ' + error.message, 'error');
+                addLog('错误详情: ' + error.stack, 'error');
+            }
+        }
+
+        async function pollTaskStatus(taskId) {
+            addLog('开始监控任务状态...', 'info');
+            for (let i = 0; i < 10; i++) {
+                try {
+                    const response = await fetch(`${API_BASE}/tasks/${taskId}`);
+                    const task = await response.json();
+
+                    const status = `状态: ${task.status}, 阶段: ${task.stage}, 进度: ${task.progress?.message || 'N/A'}`;
+                    addLog(status, 'info');
+
+                    if (task.status === 'completed') {
+                        addLog('任务完成!', 'success');
+                        break;
+                    }
+
+                    if (task.error) {
+                        addLog('任务失败: ' + task.error.message, 'error');
+                        break;
+                    }
+
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                } catch (error) {
+                    addLog('状态查询失败: ' + error.message, 'error');
+                    break;
+                }
+            }
+        }
+
+        // 页面加载时检查服务
+        window.addEventListener('load', () => {
+            addLog('页面加载完成', 'info');
+            checkHealth();
+        });
+    </script>
+</body>
+</html>

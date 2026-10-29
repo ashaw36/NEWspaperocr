@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>古报纸识读工作台</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3f3f1;
+      --surface: #ffffff;
+      --surface-2: #f7f7f5;
+      --text: #1d1d1b;
+      --muted: #666761;
+      --border: #d7d7d1;
+      --accent: #a3342f;
+      --accent-soft: #f4e7e5;
+      --success: #26734d;
+      --warning: #996515;
+      --danger: #a3342f;
+      --region: #176b87;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; min-width: 320px; background: var(--bg); color: var(--text); font-family: "Microsoft YaHei", "Noto Sans SC", sans-serif; letter-spacing: 0; }
+    button, input, select, textarea { font: inherit; letter-spacing: 0; }
+    button, select, input, textarea { border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text); }
+    button { min-height: 34px; padding: 6px 11px; cursor: pointer; }
+    button:hover:not(:disabled) { border-color: #96978f; background: var(--surface-2); }
+    button:disabled { cursor: not-allowed; opacity: .48; }
+    button.primary { color: white; border-color: var(--accent); background: var(--accent); }
+    button.primary:hover:not(:disabled) { background: #842b27; }
+    button.danger { color: var(--danger); }
+    input, select, textarea { width: 100%; padding: 7px 8px; }
+    textarea { min-height: 82px; resize: vertical; }
+    label { display: grid; gap: 5px; color: var(--muted); font-size: 13px; }
+    .app-header { height: 58px; display: flex; align-items: center; gap: 18px; padding: 0 20px; background: var(--surface); border-bottom: 1px solid var(--border); }
+    .brand { font-family: "SimSun", "Noto Serif SC", serif; font-size: 21px; font-weight: 600; white-space: nowrap; }
+    .header-meta { margin-left: auto; display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warning); }
+    .status-dot.ready { background: var(--success); }
+    .workflow { display: grid; grid-template-columns: repeat(5, 1fr); background: var(--surface); border-bottom: 1px solid var(--border); }
+    .step { min-width: 0; padding: 10px 14px; color: var(--muted); border-right: 1px solid var(--border); font-size: 13px; }
+    .step:last-child { border-right: 0; }
+    .step strong { display: block; color: inherit; font-size: 12px; font-weight: 600; }
+    .step.active { color: var(--accent); box-shadow: inset 0 -2px var(--accent); }
+    .step.done { color: var(--success); }
+    .upload-view { max-width: 760px; margin: 54px auto; padding: 0 20px; }
+    .upload-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 28px; }
+    .upload-panel h1 { margin: 0 0 8px; font: 600 26px "SimSun", "Noto Serif SC", serif; }
+    .upload-panel p { margin: 0 0 22px; color: var(--muted); }
+    .drop-zone { display: grid; place-items: center; min-height: 150px; padding: 24px; border: 1px dashed #9b9c95; border-radius: 5px; background: var(--surface-2); text-align: center; cursor: pointer; }
+    .drop-zone.drag { border-color: var(--accent); background: var(--accent-soft); }
+    .drop-zone input { display: none; }
+    .upload-options { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 18px 0; }
+    .check { display: flex; grid-column: 1 / -1; align-items: center; gap: 8px; color: var(--text); }
+    .check input { width: auto; }
+    .upload-actions { display: flex; justify-content: flex-end; }
+    .recent-tasks { margin-top: 16px; padding: 18px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+    .recent-tasks h2 { margin: 0 0 10px; font-size: 15px; }
+    .recent-list { display: grid; gap: 6px; }
+    .recent-task { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; text-align: left; }
+    .recent-task span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .recent-task small { color: var(--muted); }
+    .recent-empty { color: var(--muted); font-size: 13px; }
+    .workspace { display: none; height: calc(100vh - 108px); min-height: 600px; grid-template-columns: minmax(480px, 1fr) 340px; }
+    .workspace.visible { display: grid; }
+    .main-pane { min-width: 0; display: grid; grid-template-rows: auto minmax(340px, 1fr) 280px; }
+    .toolbar { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 7px 12px; background: var(--surface); border-bottom: 1px solid var(--border); }
+    .toolbar select { width: auto; min-width: 110px; }
+    .toolbar .spacer { flex: 1; }
+    .tool-active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+    .canvas-scroll { overflow: auto; padding: 22px; background-color: #deded9; background-image: linear-gradient(45deg, #d8d8d2 25%, transparent 25%), linear-gradient(-45deg, #d8d8d2 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #d8d8d2 75%), linear-gradient(-45deg, transparent 75%, #d8d8d2 75%); background-size: 18px 18px; background-position: 0 0, 0 9px, 9px -9px, -9px 0; }
+    .page-stage { position: relative; width: fit-content; max-width: 100%; margin: 0 auto; line-height: 0; box-shadow: 0 3px 14px rgba(0,0,0,.16); user-select: none; }
+    .page-stage img { display: block; max-width: 100%; max-height: calc(100vh - 460px); min-height: 300px; object-fit: contain; background: white; pointer-events: none; }
+    .overlay { position: absolute; inset: 0; line-height: normal; }
+    .region { position: absolute; border: 2px solid var(--region); background: rgba(23,107,135,.08); cursor: move; }
+    .region.selected { z-index: 4; border-color: var(--accent); background: rgba(163,52,47,.11); }
+    .region-label { position: absolute; top: -22px; left: -2px; max-width: 160px; height: 20px; overflow: hidden; padding: 2px 5px; color: white; background: var(--region); font-size: 11px; line-height: 16px; white-space: nowrap; }
+    .region.selected .region-label { background: var(--accent); }
+    .resize-handle { position: absolute; right: -5px; bottom: -5px; width: 12px; height: 12px; border: 2px solid white; background: var(--region); cursor: nwse-resize; }
+    .draft-region { position: absolute; z-index: 8; border: 2px dashed var(--accent); background: rgba(163,52,47,.1); pointer-events: none; }
+    .bottom-panel { min-height: 0; background: var(--surface); border-top: 1px solid var(--border); }
+    .tabs { display: flex; height: 41px; border-bottom: 1px solid var(--border); }
+    .tab { min-height: 40px; border: 0; border-right: 1px solid var(--border); border-radius: 0; background: transparent; }
+    .tab.active { color: var(--accent); box-shadow: inset 0 -2px var(--accent); }
+    .tab-content { height: calc(100% - 41px); overflow: auto; padding: 13px 16px; }
+    .result-text { margin: 0; font-family: "SimSun", monospace; white-space: pre-wrap; line-height: 1.7; }
+    .text-editor { width: 100%; min-height: 175px; border: 0; border-radius: 0; padding: 0; font-family: "SimSun", monospace; line-height: 1.7; resize: vertical; }
+    .text-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    .inline-note { color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .ai-notice { margin-bottom: 10px; padding: 9px 11px; border-left: 3px solid var(--warning); background: #fbf5e7; color: #62450d; font-size: 13px; line-height: 1.55; }
+    .correction-details { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+    .analysis-controls { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; margin-bottom: 10px; }
+    .analysis-output { white-space: pre-wrap; line-height: 1.65; }
+    .inspector { min-width: 0; overflow: auto; background: var(--surface); border-left: 1px solid var(--border); }
+    .inspector-section { padding: 15px; border-bottom: 1px solid var(--border); }
+    .inspector h2 { margin: 0 0 12px; font-size: 15px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .full { grid-column: 1 / -1; }
+    .selection-empty { color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .region-list { display: grid; gap: 5px; }
+    .region-row { display: grid; grid-template-columns: 30px minmax(0,1fr) auto; align-items: center; gap: 7px; width: 100%; min-height: 38px; padding: 5px 7px; text-align: left; }
+    .region-row.active { border-color: var(--accent); background: var(--accent-soft); }
+    .region-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .confidence { color: var(--muted); font-size: 11px; }
+    .action-stack { display: grid; gap: 8px; }
+    .progress-wrap { display: none; margin-top: 10px; }
+    .progress-wrap.visible { display: block; }
+    .progress { height: 7px; overflow: hidden; border-radius: 3px; background: #e4e4df; }
+    .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s ease; }
+    .progress-label { margin-top: 6px; color: var(--muted); font-size: 12px; }
+    .message { display: none; margin-top: 10px; padding: 9px 10px; border-left: 3px solid var(--warning); background: #fbf5e7; color: #62450d; font-size: 13px; line-height: 1.5; }
+    .message.visible { display: block; }
+    .message.error { border-color: var(--danger); background: var(--accent-soft); color: #722824; }
+    .export-links { display: flex; flex-wrap: wrap; gap: 7px; }
+    .export-links a { padding: 6px 9px; border: 1px solid var(--border); border-radius: 5px; color: var(--text); text-decoration: none; font-size: 13px; }
+    @media (max-width: 900px) {
+      .workspace.visible { height: auto; min-height: calc(100vh - 108px); grid-template-columns: 1fr; }
+      .main-pane { grid-template-rows: auto 60vh 300px; }
+      .inspector { border-top: 1px solid var(--border); border-left: 0; }
+      .page-stage img { max-height: 54vh; }
+    }
+    @media (max-width: 580px) {
+      .app-header { padding: 0 12px; }
+      .header-meta span:not(#serviceText) { display: none; }
+      .workflow { grid-template-columns: 1fr; }
+      .step { display: none; border-right: 0; }
+      .step.active { display: block; }
+      .workspace { height: calc(100vh - 99px); }
+      .upload-view { margin: 24px auto; }
+      .upload-options, .analysis-controls { grid-template-columns: 1fr; }
+      .toolbar { flex-wrap: wrap; }
+      .main-pane { grid-template-rows: auto 55vh 320px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">古报纸识读工作台</div>
+    <div class="header-meta"><span class="status-dot" id="serviceDot"></span><span id="serviceText">检查服务</span><span id="taskName"></span></div>
+  </header>
+  <nav class="workflow" aria-label="识别流程">
+    <div class="step active" data-step="layout"><strong>01 版面规划</strong>生成 OCR 窗口与结构标签</div>
+    <div class="step" data-step="review"><strong>02 人工确认</strong>增删、移动、缩放与排序</div>
+    <div class="step" data-step="ocr"><strong>03 文字识别</strong>按确认窗口执行 OCR</div>
+    <div class="step" data-step="correction"><strong>04 语义校正</strong>AI 纠错并重组文章</div>
+    <div class="step" data-step="analysis"><strong>05 研究分析</strong>总结、问答与导出</div>
+  </nav>
+
+  <main class="upload-view" id="uploadView">
+    <section class="upload-panel">
+      <h1>建立识读任务</h1>
+      <p>上传报纸后先生成可编辑版面，不会直接开始 OCR。</p>
+      <label class="drop-zone" id="dropZone">
+        <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff">
+        <span id="dropText">点击选择或拖入 PDF / 图片</span>
+      </label>
+      <div class="upload-options">
+        <label>DPI<select id="dpi"><option value="150">150 - 快速</option><option value="180" selected>180 - 推荐</option><option value="240">240 - 精细</option><option value="300">300 - 高精度</option></select></label>
+        <label>最多处理页数<input id="maxPages" type="number" min="1" max="500" placeholder="留空表示全部"></label>
+        <label class="check"><input id="aiLayout" type="checkbox" checked>AI 可用时复核窗口类型与阅读顺序</label>
+      </div>
+      <div class="upload-actions"><button class="primary" id="createTask" disabled>分析版面</button></div>
+      <div class="progress-wrap" id="uploadProgress"><div class="progress"><div id="uploadProgressBar"></div></div><div class="progress-label" id="uploadProgressLabel"></div></div>
+      <div class="message" id="uploadMessage"></div>
+    </section>
+    <section class="recent-tasks" id="recentTasks">
+      <h2>最近任务</h2>
+      <div class="recent-list" id="recentList"><div class="recent-empty">正在读取...</div></div>
+    </section>
+  </main>
+
+  <main class="workspace" id="workspace">
+    <section class="main-pane">
+      <div class="toolbar">
+        <button id="prevPage" aria-label="上一页">‹</button>
+        <select id="pageSelect" aria-label="页码"></select>
+        <button id="nextPage" aria-label="下一页">›</button>
+        <button id="addRegion">添加窗口</button>
+        <button id="saveLayout">保存版面</button>
+        <button id="expandLayout" hidden>分析全部页面</button>
+        <select id="ocrScope" aria-label="OCR范围"><option value="current">仅当前页</option><option value="all">全部页面</option></select>
+        <span class="spacer"></span>
+        <button class="primary" id="confirmOcr">确认并识别当前页</button>
+      </div>
+      <div class="canvas-scroll">
+        <div class="page-stage" id="pageStage">
+          <img id="pageImage" alt="报纸页面">
+          <div class="overlay" id="overlay"></div>
+        </div>
+      </div>
+      <section class="bottom-panel">
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-tab="raw">原始 OCR</button>
+          <button class="tab" data-tab="corrected">AI 校正稿</button>
+          <button class="tab" data-tab="analysis">研究分析</button>
+        </div>
+        <div class="tab-content" id="rawPanel">
+          <div class="ai-notice" id="layoutQualityNotice" hidden></div>
+          <div class="text-actions"><strong id="rawPageLabel">当前页原始 OCR</strong><button id="saveRawText" disabled>保存人工修订</button><span class="inline-note" id="rawHint">等待当前页 OCR</span></div>
+          <textarea class="text-editor" id="rawText" aria-label="当前页原始 OCR 文本" placeholder="当前页完成 OCR 后可在此人工修订" disabled></textarea>
+          <div class="correction-details" id="regionResults"></div>
+        </div>
+        <div class="tab-content" id="correctedPanel" hidden>
+          <div class="ai-notice" id="aiNotice"></div>
+          <div class="text-actions"><select id="correctionScope" aria-label="AI校正范围"><option value="current">校正当前页</option><option value="all">校正全部已识别页</option></select><button class="primary" id="correctNow">开始语义校正</button><span class="inline-note" id="correctionHint"></span></div>
+          <div class="text-actions"><strong id="correctedPageLabel">当前页 AI 校正稿</strong><button id="saveCorrectedText" disabled>保存人工定稿</button><span class="inline-note" id="correctedHint"></span></div>
+          <textarea class="text-editor" id="correctedText" aria-label="当前页 AI 校正稿" placeholder="完成语义校正后可在此人工定稿" disabled></textarea>
+          <div class="correction-details" id="correctionDetails"></div>
+        </div>
+        <div class="tab-content" id="analysisPanel" hidden>
+          <div class="analysis-controls"><input id="analysisInput" placeholder="输入总结重点或针对报纸提问"><button id="summaryBtn">生成总结</button><button id="questionBtn">提问</button></div>
+          <div class="analysis-output" id="analysisOutput">完成 OCR 后可进行分析。</div>
+        </div>
+      </section>
+    </section>
+
+    <aside class="inspector">
+      <section class="inspector-section">
+        <h2>任务进度</h2>
+        <div class="progress"><div id="taskProgressBar"></div></div>
+        <div class="progress-label" id="taskProgressLabel">等待任务</div>
+        <div class="message" id="taskMessage"></div>
+      </section>
+      <section class="inspector-section">
+        <h2>当前窗口</h2>
+        <div class="selection-empty" id="selectionEmpty">选择一个窗口后编辑属性。拖动窗口可移动，拖动右下角可缩放。</div>
+        <div class="form-grid" id="regionForm" hidden>
+          <label>类型<select id="regionLabel"><option value="masthead">刊名</option><option value="title">标题</option><option value="subtitle">副标题</option><option value="body">正文</option><option value="caption">图注</option><option value="metadata">出版信息</option><option value="advertisement">广告</option><option value="ignore">忽略</option></select></label>
+          <label>方向<select id="regionDirection"><option value="vertical-rtl">竖排，从右到左</option><option value="horizontal-ltr">横排，从左到右</option></select></label>
+          <label>顺序<input id="regionOrder" type="number" min="1"></label>
+          <label>文章分组<input id="articleId" placeholder="article-1"></label>
+          <label class="full">备注<textarea id="regionNotes"></textarea></label>
+          <button class="danger full" id="deleteRegion">删除窗口</button>
+        </div>
+      </section>
+      <section class="inspector-section">
+        <h2>本页窗口</h2>
+        <div class="region-list" id="regionList"></div>
+      </section>
+      <section class="inspector-section action-stack">
+        <h2>AI 与导出</h2>
+        <button id="correctBtn" disabled>进入 AI 语义校正</button>
+        <div class="export-links">
+          <a id="exportRaw" href="#">原始文本</a><a id="exportCorrected" href="#">校正文本</a><a id="exportJson" href="#">结构化 JSON</a>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <script>
+    const API = window.OCR_API_BASE || 'http://127.0.0.1:5000';
+    const state = { file: null, task: null, pageIndex: 0, selectedId: null, addMode: false, pollTimer: null, raw: null, corrected: null, health: null };
+    const $ = id => document.getElementById(id);
+    const labels = { masthead:'刊名', title:'标题', subtitle:'副标题', body:'正文', caption:'图注', metadata:'出版信息', advertisement:'广告', ignore:'忽略' };
+
+    async function api(path, options = {}) {
+      const response = await fetch(`${API}${path}`, options);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
+      return data;
+    }
+    function message(element, text, error = false) { element.textContent = text || ''; element.className = `message${text ? ' visible' : ''}${error ? ' error' : ''}`; }
+    function stage(name) {
+      const order = ['layout','review','ocr','correction','analysis'];
+      const current = order.indexOf(name);
+      document.querySelectorAll('.step').forEach((item, index) => { item.classList.toggle('active', index === current); item.classList.toggle('done', index < current); });
+    }
+    async function checkHealth() {
+      try {
+        const health = await api('/api/health');
+        state.health = health;
+        $('serviceDot').classList.toggle('ready', health.ocr.ready);
+        $('serviceText').textContent = health.ocr.ready ? `${health.ocr.backend}${health.ai.available ? ` · ${health.ai.backend}` : ' · AI未配置'}` : 'OCR不可用';
+        updateActions();
+      } catch { $('serviceText').textContent = '后端未连接'; }
+    }
+
+    const statusLabels = {
+      queued:'等待版面分析', layout_running:'正在分析版面', awaiting_layout_review:'待确认版面',
+      ocr_queued:'等待 OCR', ocr_running:'正在 OCR', ocr_ready:'OCR 已完成',
+      correction_queued:'等待 AI 校正', correction_running:'正在 AI 校正', correction_ready:'AI 校正已完成',
+      interrupted:'任务已中断，可继续', failed:'任务失败'
+    };
+    async function loadRecentTasks() {
+      try {
+        const result = await api('/api/tasks');
+        $('recentList').innerHTML = '';
+        if (!result.tasks.length) { $('recentList').innerHTML = '<div class="recent-empty">还没有识读任务</div>'; return; }
+        for (const task of result.tasks.slice(0, 8)) {
+          const button = document.createElement('button'); button.className = 'recent-task'; button.dataset.taskId = task.id;
+          const name = document.createElement('span'); name.textContent = task.source_name;
+          const status = document.createElement('small'); status.textContent = statusLabels[task.status] || task.status;
+          button.append(name, status); button.onclick = () => resumeTask(task.id); $('recentList').appendChild(button);
+        }
+      } catch (error) { $('recentList').innerHTML = `<div class="recent-empty">${error.message}</div>`; }
+    }
+    async function resumeTask(taskId) {
+      try {
+        clearTimeout(state.pollTimer); state.raw = null; state.corrected = null; state.pageIndex = 0;
+        state.task = await api(`/api/tasks/${taskId}`); $('taskName').textContent = state.task.source_name; updateProgress();
+        if (state.task.status === 'awaiting_layout_review') { openWorkspace(); stage('review'); return; }
+        if (state.task.status === 'ocr_ready') { await loadRaw(); openWorkspace(); stage('correction'); showTab('raw'); return; }
+        if (state.task.status === 'correction_ready') { await loadCorrection(); openWorkspace(); stage('analysis'); showTab('corrected'); return; }
+        if (state.task.status === 'interrupted') { if (state.task.ocr?.pages) await loadRaw(true); openWorkspace(); stage(state.task.stage || 'ocr'); updateActions(); message($('taskMessage'), state.task.error?.message || '任务已中断，可以继续处理', true); return; }
+        if (state.task.pages?.length) openWorkspace();
+        pollTask();
+      } catch (error) { message($('uploadMessage'), error.message, true); }
+    }
+
+    $('dropZone').onclick = () => $('fileInput').click();
+    $('fileInput').onchange = event => selectFile(event.target.files[0]);
+    for (const type of ['dragenter','dragover']) $('dropZone').addEventListener(type, event => { event.preventDefault(); $('dropZone').classList.add('drag'); });
+    for (const type of ['dragleave','drop']) $('dropZone').addEventListener(type, event => { event.preventDefault(); $('dropZone').classList.remove('drag'); });
+    $('dropZone').addEventListener('drop', event => selectFile(event.dataTransfer.files[0]));
+    function selectFile(file) {
+      if (!file) return;
+      state.file = file; $('dropText').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB`; $('createTask').disabled = false;
+    }
+
+    $('createTask').onclick = async () => {
+      const form = new FormData(); form.append('file', state.file); form.append('dpi', $('dpi').value); form.append('max_pages', $('maxPages').value); form.append('ai_layout', $('aiLayout').checked);
+      $('createTask').disabled = true; $('uploadProgress').classList.add('visible'); message($('uploadMessage'), '');
+      try {
+        state.task = await api('/api/tasks', { method:'POST', body:form });
+        $('taskName').textContent = state.task.source_name;
+        pollTask();
+      } catch (error) { message($('uploadMessage'), error.message, true); $('createTask').disabled = false; }
+    };
+
+    async function pollTask() {
+      clearTimeout(state.pollTimer);
+      if (!state.task) return;
+      try {
+        state.task = await api(`/api/tasks/${state.task.id}`);
+        updateProgress();
+        if (state.task.status === 'awaiting_layout_review') {
+          openWorkspace(); stage('review'); return;
+        }
+        if (state.task.status === 'ocr_running' && state.task.ocr?.pages) await loadRaw(true);
+        if (state.task.status === 'ocr_ready') { await loadRaw(); openWorkspace(); stage('correction'); showTab('raw'); return; }
+        if (state.task.status === 'correction_ready') { await loadCorrection(); openWorkspace(); stage('analysis'); return; }
+        if (state.task.status === 'interrupted') { if(state.task.ocr?.pages) await loadRaw(true); openWorkspace(); updateActions(); message($('taskMessage'), state.task.error?.message || '任务已中断，可以重新启动当前阶段', true); return; }
+        if (state.task.status === 'failed') {
+          const errorMessage = state.task.error?.message || '任务失败';
+          if (state.task.ocr?.pages) {
+            await loadRaw(true); openWorkspace(); stage(state.task.stage || 'ocr'); showTab('raw'); updateActions();
+            const retainedMessage = state.task.stage === 'correction'
+              ? `${errorMessage} 原始 OCR 文本仍可查看、编辑和导出；解决 AI 账户余额问题后可重新校正。`
+              : errorMessage;
+            message($('taskMessage'), retainedMessage, true);
+          } else {
+            message($('taskMessage'), errorMessage, true);
+          }
+          message($('uploadMessage'), errorMessage, true); return;
+        }
+        state.pollTimer = setTimeout(pollTask, 1200);
+      } catch (error) { message($('uploadMessage'), error.message, true); state.pollTimer = setTimeout(pollTask, 2500); }
+    }
+    function updateProgress() {
+      const p = state.task.progress || {current:0,total:0,message:''}; const percent = p.total ? Math.round(p.current / p.total * 100) : 5;
+      $('uploadProgressBar').style.width = `${percent}%`; $('taskProgressBar').style.width = `${percent}%`;
+      $('uploadProgressLabel').textContent = p.message; $('taskProgressLabel').textContent = `${p.message} · ${p.current}/${p.total}`;
+    }
+    function openWorkspace() {
+      $('uploadView').style.display = 'none'; $('workspace').classList.add('visible');
+      renderPageOptions(); renderPage(); updateActions();
+    }
+    function renderPageOptions() {
+      const current = $('pageSelect').value;
+      $('pageSelect').innerHTML = state.task.pages.map((page, index) => `<option value="${index}">第 ${page.page_number} 页</option>`).join('');
+      $('pageSelect').value = current && Number(current) < state.task.pages.length ? current : state.pageIndex;
+    }
+    function currentPage() { return state.task.pages[state.pageIndex]; }
+    function renderPage() {
+      if (!currentPage()) return;
+      state.selectedId = null; $('pageSelect').value = state.pageIndex;
+      $('pageImage').src = `${API}${currentPage().image_url}?v=${encodeURIComponent(state.task.updated_at)}`;
+      $('pageImage').onload = renderRegions;
+      $('prevPage').disabled = state.pageIndex === 0; $('nextPage').disabled = state.pageIndex >= state.task.pages.length - 1;
+      renderRegions(); renderInspector(); renderTextForPage(); updateActions();
+    }
+    function renderRegions() {
+      const overlay = $('overlay'); overlay.innerHTML = '';
+      for (const region of currentPage().layout.regions) {
+        const node = document.createElement('div'); node.className = `region${region.id === state.selectedId ? ' selected' : ''}`; node.dataset.id = region.id;
+        Object.assign(node.style, { left:`${region.bbox.x*100}%`, top:`${region.bbox.y*100}%`, width:`${region.bbox.width*100}%`, height:`${region.bbox.height*100}%` });
+        node.innerHTML = `<span class="region-label">${region.order} · ${labels[region.label] || region.label}</span><span class="resize-handle"></span>`;
+        node.addEventListener('pointerdown', beginRegionInteraction); overlay.appendChild(node);
+      }
+      renderRegionList();
+    }
+    function selectRegion(id) { state.selectedId = id; renderRegions(); renderInspector(); }
+    function selectedRegion() { return currentPage()?.layout.regions.find(region => region.id === state.selectedId); }
+    function beginRegionInteraction(event) {
+      if (state.addMode) return;
+      event.preventDefault(); event.stopPropagation(); const id = event.currentTarget.dataset.id; selectRegion(id);
+      const region = selectedRegion(); const start = point(event); const initial = {...region.bbox}; const resizing = event.target.classList.contains('resize-handle');
+      const move = moveEvent => {
+        const now = point(moveEvent), dx = now.x - start.x, dy = now.y - start.y;
+        if (resizing) { region.bbox.width = clamp(initial.width + dx, .01, 1 - initial.x); region.bbox.height = clamp(initial.height + dy, .01, 1 - initial.y); }
+        else { region.bbox.x = clamp(initial.x + dx, 0, 1 - initial.width); region.bbox.y = clamp(initial.y + dy, 0, 1 - initial.height); }
+        renderRegions();
+      };
+      const end = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', end); };
+      window.addEventListener('pointermove', move); window.addEventListener('pointerup', end);
+    }
+    function point(event) { const rect = $('overlay').getBoundingClientRect(); return {x:clamp((event.clientX-rect.left)/rect.width,0,1), y:clamp((event.clientY-rect.top)/rect.height,0,1)}; }
+    const clamp = (value,min,max) => Math.min(max,Math.max(min,value));
+
+    $('addRegion').onclick = () => { state.addMode = !state.addMode; $('addRegion').classList.toggle('tool-active', state.addMode); };
+    $('overlay').addEventListener('pointerdown', event => {
+      if (!state.addMode || event.target !== $('overlay')) return;
+      event.preventDefault(); const start = point(event), draft = document.createElement('div'); draft.className='draft-region'; $('overlay').appendChild(draft);
+      const move = moveEvent => { const now=point(moveEvent), x=Math.min(start.x,now.x), y=Math.min(start.y,now.y); Object.assign(draft.style,{left:`${x*100}%`,top:`${y*100}%`,width:`${Math.abs(now.x-start.x)*100}%`,height:`${Math.abs(now.y-start.y)*100}%`}); };
+      const end = endEvent => { const now=point(endEvent), x=Math.min(start.x,now.x), y=Math.min(start.y,now.y), width=Math.abs(now.x-start.x), height=Math.abs(now.y-start.y); draft.remove(); window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',end); if(width>.01&&height>.01){ const id=crypto.randomUUID().replaceAll('-','').slice(0,12); currentPage().layout.regions.push({id,order:currentPage().layout.regions.length+1,label:'body',article_id:`page-${currentPage().page_number}-article-1`,direction:'vertical-rtl',bbox:{x,y,width,height},source:'user',confidence:1,notes:''}); state.addMode=false; $('addRegion').classList.remove('tool-active'); selectRegion(id); } };
+      window.addEventListener('pointermove',move); window.addEventListener('pointerup',end);
+    });
+
+    function renderInspector() {
+      const region = selectedRegion(); $('selectionEmpty').hidden = Boolean(region); $('regionForm').hidden = !region;
+      if (!region) return;
+      $('regionLabel').value=region.label; $('regionDirection').value=region.direction; $('regionOrder').value=region.order; $('articleId').value=region.article_id; $('regionNotes').value=region.notes||'';
+    }
+    for (const [id,key] of [['regionLabel','label'],['regionDirection','direction'],['regionOrder','order'],['articleId','article_id'],['regionNotes','notes']]) {
+      $(id).addEventListener('input', event => { const region=selectedRegion(); if(!region)return; region[key]=key==='order'?Math.max(1,Number(event.target.value)||1):event.target.value; currentPage().layout.regions.sort((a,b)=>a.order-b.order); renderRegions(); });
+    }
+    $('deleteRegion').onclick = () => { currentPage().layout.regions=currentPage().layout.regions.filter(region=>region.id!==state.selectedId); state.selectedId=null; renumber(); renderRegions(); renderInspector(); };
+    function renumber(){ currentPage().layout.regions.sort((a,b)=>a.order-b.order).forEach((region,index)=>region.order=index+1); }
+    function renderRegionList(){ $('regionList').innerHTML=currentPage().layout.regions.slice().sort((a,b)=>a.order-b.order).map(region=>{const quality=state.raw?.pages?.find(page=>page.page_number===currentPage().page_number)?.regions?.find(item=>item.region_id===region.id)?.quality; const mark=quality?.status==='needs_review'?' · 待复核':quality?.status==='check'?' · 检查':''; return `<button class="region-row${region.id===state.selectedId?' active':''}" data-id="${region.id}"><b>${region.order}</b><span>${labels[region.label]} · ${region.article_id}${mark}</span><small class="confidence">${Math.round((quality?.score??region.confidence??0)*100)}%</small></button>`}).join(''); document.querySelectorAll('.region-row').forEach(node=>node.onclick=()=>selectRegion(node.dataset.id)); }
+    function layoutPayload(){ return state.task.pages.map(page=>({page_number:page.page_number,regions:page.layout.regions})); }
+    async function saveLayout(){ state.task=await api(`/api/tasks/${state.task.id}/layout`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({pages:layoutPayload()})}); message($('taskMessage'),'版面已保存'); }
+    $('saveLayout').onclick=async()=>{try{await saveLayout();}catch(error){message($('taskMessage'),error.message,true);}};
+    $('expandLayout').onclick=async()=>{try{state.task=await api(`/api/tasks/${state.task.id}/layout/expand`,{method:'POST'}); updateActions(); pollTask(); message($('taskMessage'),'正在后台分析其余页面，当前页仍可继续确认');}catch(error){message($('taskMessage'),error.message,true);}};
+    $('ocrScope').onchange=updateActions;
+    $('confirmOcr').onclick=async()=>{try{const pageNumbers=$('ocrScope').value==='current'?[currentPage().page_number]:state.task.pages.map(page=>page.page_number); state.task=await api(`/api/tasks/${state.task.id}/ocr`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pages:layoutPayload(),page_numbers:pageNumbers})}); updateActions(); stage('ocr'); showTab('raw'); pollTask();}catch(error){message($('taskMessage'),error.message,true);}};
+    $('correctBtn').onclick=()=>showTab('corrected');
+    $('correctNow').onclick=startCorrection;
+    async function startCorrection(){try{const completed=state.raw?.pages?.map(page=>page.page_number)||[]; const current=currentPage().page_number; const pageNumbers=$('correctionScope').value==='current'?[current]:completed; state.task=await api(`/api/tasks/${state.task.id}/correction`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page_numbers:pageNumbers})}); updateActions(); stage('correction'); pollTask();}catch(error){message($('taskMessage'),error.message,true);}}
+    function updateActions(){
+      if(!state.task)return;
+      const busy=['layout_running','ocr_queued','ocr_running','correction_queued','correction_running'].includes(state.task.status);
+      const completed=state.raw?.pages?.map(page=>page.page_number)||state.task.ocr?.completed_pages||[];
+      const currentDone=currentPage()&&completed.includes(currentPage().page_number);
+      $('confirmOcr').disabled=busy||!state.task.pages.length; $('saveLayout').disabled=busy; $('addRegion').disabled=busy; $('ocrScope').disabled=busy;
+      $('expandLayout').hidden=!state.task.document_page_count || state.task.pages.length>=state.task.document_page_count;
+      $('expandLayout').disabled=busy;
+      $('confirmOcr').textContent=$('ocrScope').value==='current'?'确认并识别当前页':`确认并识别全部 ${state.task.pages.length} 页`;
+      const aiReady=Boolean(state.health?.ai?.available), canCorrect=!busy&&completed.length>0;
+      $('correctBtn').disabled=!canCorrect; $('correctNow').disabled=!aiReady||!canCorrect||($('correctionScope').value==='current'&&!currentDone);
+      $('correctionScope').disabled=busy||!completed.length;
+      $('aiNotice').textContent=aiReady?`当前 AI：${state.health.ai.backend} · ${state.health.ai.model || '默认模型'}。会参考窗口类型、文章分组和阅读顺序，保留繁体与历史措辞，并记录每一处修改。`:'AI 尚未配置。请在 backend/.env 配置 DEEPSEEK_API_KEY、ANTHROPIC_API_KEY 或 OPENAI_API_KEY，重启后端后再进行语义校正。原始 OCR 与人工修订仍可正常使用。';
+      $('correctionHint').textContent=!completed.length?'请先完成至少一页 OCR':($('correctionScope').value==='current'&&!currentDone?'当前页尚未完成 OCR':`已有 ${completed.length} 页可校正`);
+      const hasText=completed.length>0; $('summaryBtn').disabled=!aiReady||!hasText; $('questionBtn').disabled=!aiReady||!hasText;
+      for(const [id,kind] of [['exportRaw','raw'],['exportCorrected','corrected'],['exportJson','json']]) $(id).href=`${API}/api/tasks/${state.task.id}/export/${kind}`;
+    }
+    async function loadRaw(silent=false){try{state.raw=await api(`/api/tasks/${state.task.id}/ocr`); renderTextForPage(); updateActions();}catch(error){if(!silent)throw error;}}
+    async function loadCorrection(){ state.corrected=await api(`/api/tasks/${state.task.id}/correction`); renderTextForPage(); if(!state.raw)await loadRaw(); updateActions(); }
+    function renderTextForPage(){
+      if(!currentPage())return;
+      const pageNumber=currentPage().page_number, rawPage=state.raw?.pages?.find(page=>page.page_number===pageNumber), correctedPage=state.corrected?.pages?.find(page=>page.page_number===pageNumber);
+      $('rawPageLabel').textContent=`第 ${pageNumber} 页原始 OCR`;
+      $('rawText').value=rawPage?.raw_text||''; $('rawText').disabled=!rawPage; $('saveRawText').disabled=!rawPage;
+      $('rawHint').textContent=rawPage?(rawPage.manually_edited?'已保存人工修订':'可以直接修改并保存；AI 校正会使用修订后的文本'):(state.task?.status==='ocr_running'?'当前页尚在等待或识别中':'当前页尚未 OCR');
+      const layoutQuality=state.task?.layout_quality, layoutNotice=$('layoutQualityNotice');
+      layoutNotice.hidden=!layoutQuality;
+      layoutNotice.textContent=layoutQuality?.mode==='computer-vision-fallback'?'版面 AI 复核未成功，当前使用本地自动布局建议。请重点检查刊头、标题、栏间顺序和窗口范围。':(layoutQuality?.vision_failed?'部分页面版面 AI 复核失败，失败页面使用本地布局建议。':'');
+      renderRegionResults(rawPage);
+      $('correctedPageLabel').textContent=`第 ${pageNumber} 页 AI 校正稿`;
+      $('correctedText').value=correctedPage?.corrected_text||''; $('correctedText').disabled=!correctedPage; $('saveCorrectedText').disabled=!correctedPage;
+      $('correctedHint').textContent=correctedPage?(correctedPage.manually_edited?'已保存人工定稿':'可继续修改，保存后用于总结与分析'):'当前页尚未进行 AI 语义校正';
+      renderCorrectionDetails(correctedPage); renderRegionList();
+    }
+    function renderRegionResults(page){
+      const panel=$('regionResults'); panel.textContent=''; if(!page)return;
+      const lines=[];
+      for(const region of [...(page.regions||[])].sort((a,b)=>a.order-b.order)){
+        const status=region.quality?.status==='needs_review'?'待复核':region.quality?.status==='check'?'需检查':'候选';
+        lines.push(`窗口 ${region.order} · ${labels[region.label]||region.label} · ${status}`);
+        if(region.visual_text) lines.push(`视觉转录：${region.visual_text}`);
+        if(region.raw_text) lines.push(`本地 OCR：${region.raw_text}`);
+        if(region.visual_uncertain) lines.push(`不确定字：${region.visual_uncertain}`);
+        if(region.vision_error) lines.push(`视觉识别未完成：${region.vision_error}`);
+        lines.push('');
+      }
+      panel.textContent=lines.join('\n');
+    }
+    function renderCorrectionDetails(page){
+      const details=$('correctionDetails'); details.textContent=''; if(!page)return;
+      const corrections=Array.isArray(page.corrections)?page.corrections:[], warnings=Array.isArray(page.warnings)?page.warnings:[];
+      const lines=[`AI 修改记录：${corrections.length} 处`];
+      for(const item of corrections)lines.push(`- ${item.original||''} → ${item.corrected||''}${item.reason?`（${item.reason}）`:''}`);
+      if(warnings.length)lines.push(`疑难提示：\n${warnings.map(item=>`- ${typeof item==='string'?item:JSON.stringify(item)}`).join('\n')}`);
+      details.textContent=lines.join('\n');
+    }
+    $('saveRawText').onclick=async()=>{try{const pageNumber=currentPage().page_number; state.raw=await api(`/api/tasks/${state.task.id}/ocr`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({pages:[{page_number:pageNumber,raw_text:$('rawText').value}]})}); if(state.corrected)state.corrected.pages=state.corrected.pages.filter(page=>page.page_number!==pageNumber); state.task=await api(`/api/tasks/${state.task.id}`); renderTextForPage(); updateActions(); message($('taskMessage'),'人工修订已保存；这一页的旧 AI 校正稿已失效，请重新校正');}catch(error){message($('taskMessage'),error.message,true);}};
+    $('saveCorrectedText').onclick=async()=>{try{const pageNumber=currentPage().page_number; state.corrected=await api(`/api/tasks/${state.task.id}/correction`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({pages:[{page_number:pageNumber,corrected_text:$('correctedText').value}]})}); state.task=await api(`/api/tasks/${state.task.id}`); renderTextForPage(); updateActions(); message($('taskMessage'),'人工定稿已保存，后续总结与问答将优先使用校正稿');}catch(error){message($('taskMessage'),error.message,true);}};
+    $('correctionScope').onchange=updateActions;
+
+    $('pageSelect').onchange=event=>{state.pageIndex=Number(event.target.value);renderPage();};
+    $('prevPage').onclick=()=>{if(state.pageIndex>0){state.pageIndex--;renderPage();}}; $('nextPage').onclick=()=>{if(state.pageIndex<state.task.pages.length-1){state.pageIndex++;renderPage();}};
+    function showTab(name){document.querySelectorAll('.tab').forEach(item=>item.classList.toggle('active',item.dataset.tab===name)); for(const item of ['raw','corrected','analysis']) $(`${item}Panel`).hidden=item!==name; if(name==='corrected')updateActions();}
+    document.querySelectorAll('.tab').forEach(tab=>tab.onclick=()=>showTab(tab.dataset.tab));
+    function analysisList(value){ if(!Array.isArray(value))return ''; return value.filter(item=>item!==null&&item!==undefined&&String(item).trim()).map(item=>`<li>${escapeHtml(typeof item==='string'?item:(item.name||item.text||JSON.stringify(item)))}</li>`).join(''); }
+    function escapeHtml(value){ return String(value).replace(/[&<>"']/g, char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char])); }
+    function renderAnalysis(result, action){
+      const output=$('analysisOutput'); output.innerHTML='';
+      if(action==='question'){
+        const answer=escapeHtml(result.answer||'未能得到明确回答');
+        output.innerHTML=`<h3>回答</h3><p>${answer}</p>${result.evidence?.length?`<h3>依据</h3><ul>${analysisList(result.evidence)}</ul>`:''}${result.uncertainties?.length?`<h3>不确定性</h3><ul>${analysisList(result.uncertainties)}</ul>`:''}`;
+        return;
+      }
+      const sections=[['摘要',result.summary],['关键要点',result.key_points],['人物',result.people],['机构',result.organizations],['地点',result.places],['日期',result.dates],['主题',result.topics],['不确定性',result.uncertainties]];
+      output.innerHTML=sections.filter(([,value])=>Array.isArray(value)?value.length:value).map(([title,value])=>`<section><h3>${title}</h3>${Array.isArray(value)?`<ul>${analysisList(value)}</ul>`:`<p>${escapeHtml(value)}</p>`}</section>`).join('')||'<p>没有返回可展示的分析内容。</p>';
+    }
+    async function analyze(action){ const input=$('analysisInput').value.trim(); $('analysisOutput').textContent='AI正在分析...'; try{const payload=action==='summary'?{action,instruction:input}:{action,question:input}; const result=await api(`/api/tasks/${state.task.id}/analysis`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); renderAnalysis(result,action);}catch(error){$('analysisOutput').textContent=error.message;} }
+    $('summaryBtn').onclick=()=>analyze('summary'); $('questionBtn').onclick=()=>analyze('question');
+    checkHealth(); loadRecentTasks();
+  </script>
+</body>
+</html>

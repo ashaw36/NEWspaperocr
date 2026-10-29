@@ -343,7 +343,19 @@
         if (state.task.status === 'ocr_ready') { await loadRaw(); openWorkspace(); stage('correction'); showTab('raw'); return; }
         if (state.task.status === 'correction_ready') { await loadCorrection(); openWorkspace(); stage('analysis'); return; }
         if (state.task.status === 'interrupted') { if(state.task.ocr?.pages) await loadRaw(true); openWorkspace(); updateActions(); message($('taskMessage'), state.task.error?.message || '任务已中断，可以重新启动当前阶段', true); return; }
-        if (state.task.status === 'failed') { message($('taskMessage'), state.task.error?.message || '任务失败', true); message($('uploadMessage'), state.task.error?.message || '任务失败', true); return; }
+        if (state.task.status === 'failed') {
+          const errorMessage = state.task.error?.message || '任务失败';
+          if (state.task.ocr?.pages) {
+            await loadRaw(true); openWorkspace(); stage(state.task.stage || 'ocr'); showTab('raw'); updateActions();
+            const retainedMessage = state.task.stage === 'correction'
+              ? `${errorMessage} 原始 OCR 文本仍可查看、编辑和导出；解决 AI 账户余额问题后可重新校正。`
+              : errorMessage;
+            message($('taskMessage'), retainedMessage, true);
+          } else {
+            message($('taskMessage'), errorMessage, true);
+          }
+          message($('uploadMessage'), errorMessage, true); return;
+        }
         state.pollTimer = setTimeout(pollTask, 1200);
       } catch (error) { message($('uploadMessage'), error.message, true); state.pollTimer = setTimeout(pollTask, 2500); }
     }

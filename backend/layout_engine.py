@@ -51,7 +51,7 @@ class LayoutEngine:
             boxes = [content]
 
         boxes = self._deduplicate(boxes, width, height)
-        if direction == "vertical-rtl":
+        if direction == "vertical-rtl" and layout_type != "grid":
             boxes = self._split_oversized_vertical_regions(boxes, ink, width, height)
         regions = [self._region(box, width, height, direction, layout_type, ink, page_number) for box in boxes]
         regions = self.sort_regions(regions, direction, layout_type)
@@ -60,7 +60,8 @@ class LayoutEngine:
 
         # Structural labels and article grouping are intentionally conservative:
         # geometry cannot reliably infer semantic article boundaries.
-        self._label_vertical_regions(regions, width, height)
+        if layout_type == "vertical-columns":
+            self._label_vertical_regions(regions, width, height)
 
         return {
             "layout_type": layout_type,
