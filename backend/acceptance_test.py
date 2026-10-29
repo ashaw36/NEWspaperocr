@@ -61,10 +61,7 @@ class AcceptanceTest:
             print(f"\n测试项: {name}")
             try:
                 passed, details = test_func()
-                self.test_results[name] = {
-                    'passed': passed,
-                    'details': details
-                }
+                self.test_results[name] = {"passed": passed, "details": details}
 
                 if passed:
                     print(f"   ✅ 通过")
@@ -77,10 +74,7 @@ class AcceptanceTest:
 
             except Exception as e:
                 print(f"   ❌ 测试执行失败: {e}")
-                self.test_results[name] = {
-                    'passed': False,
-                    'details': str(e)
-                }
+                self.test_results[name] = {"passed": False, "details": str(e)}
                 all_passed = False
 
         # 3. Print summary
@@ -88,11 +82,11 @@ class AcceptanceTest:
         print("📊 验收测试汇总")
         print("=" * 80)
 
-        passed_count = sum(1 for r in self.test_results.values() if r['passed'])
+        passed_count = sum(1 for r in self.test_results.values() if r["passed"])
         total_count = len(self.test_results)
 
         for name, result in self.test_results.items():
-            status = "✅ 通过" if result['passed'] else "❌ 失败"
+            status = "✅ 通过" if result["passed"] else "❌ 失败"
             print(f"{status}  {name}")
 
         print("\n" + "-" * 80)
@@ -114,38 +108,33 @@ class AcceptanceTest:
         try:
             # Upload
             print("   上传文件...")
-            with open(image_path, 'rb') as f:
-                files = {'file': (Path(image_path).name, f, 'image/png')}
-                data = {'ai_layout': 'true'}
+            with open(image_path, "rb") as f:
+                files = {"file": (Path(image_path).name, f, "image/png")}
+                data = {"ai_layout": "true"}
                 response = requests.post(
-                    f"{self.base_url}/api/tasks",
-                    files=files,
-                    data=data,
-                    timeout=30
+                    f"{self.base_url}/api/tasks", files=files, data=data, timeout=30
                 )
                 if response.status_code != 202:
                     print(f"   上传失败: {response.text}")
                     return False
 
-                self.task_id = response.json()['id']
+                self.task_id = response.json()["id"]
                 print(f"   任务ID: {self.task_id}")
 
             # Wait for layout
             print("   版面分析中...")
-            if not self._poll_status('layout_ready', 60):
+            if not self._poll_status("layout_ready", 60):
                 return False
 
             # Start OCR
             print("   OCR识别中...")
             response = requests.post(
-                f"{self.base_url}/api/tasks/{self.task_id}/ocr",
-                json={},
-                timeout=10
+                f"{self.base_url}/api/tasks/{self.task_id}/ocr", json={}, timeout=10
             )
             if response.status_code != 202:
                 return False
 
-            if not self._poll_status('ocr_ready', 120):
+            if not self._poll_status("ocr_ready", 120):
                 return False
 
             # Start correction
@@ -153,12 +142,12 @@ class AcceptanceTest:
             response = requests.post(
                 f"{self.base_url}/api/tasks/{self.task_id}/correction",
                 json={},
-                timeout=10
+                timeout=10,
             )
             if response.status_code != 202:
                 return False
 
-            if not self._poll_status('correction_ready', 180):
+            if not self._poll_status("correction_ready", 180):
                 return False
 
             return True
@@ -174,10 +163,10 @@ class AcceptanceTest:
             response = requests.get(f"{self.base_url}/api/tasks/{self.task_id}")
             task = response.json()
 
-            if task.get('status') == target_status:
+            if task.get("status") == target_status:
                 return True
 
-            if task.get('status', '').startswith('error'):
+            if task.get("status", "").startswith("error"):
                 print(f"   错误: {task.get('error')}")
                 return False
 
@@ -191,9 +180,9 @@ class AcceptanceTest:
         response = requests.get(f"{self.base_url}/api/tasks/{self.task_id}/validate")
         validation = response.json()
 
-        completeness = validation.get('completeness', {})
-        score = completeness.get('score', 0)
-        empty_regions = completeness.get('empty_regions', 0)
+        completeness = validation.get("completeness", {})
+        score = completeness.get("score", 0)
+        empty_regions = completeness.get("empty_regions", 0)
 
         # 要求: 至少95%的区域有内容
         passed = score >= 0.95
@@ -207,9 +196,9 @@ class AcceptanceTest:
         response = requests.get(f"{self.base_url}/api/tasks/{self.task_id}/validate")
         validation = response.json()
 
-        accuracy = validation.get('accuracy', {})
-        score = accuracy.get('score', 0)
-        avg_confidence = accuracy.get('avg_confidence', 0)
+        accuracy = validation.get("accuracy", {})
+        score = accuracy.get("score", 0)
+        avg_confidence = accuracy.get("avg_confidence", 0)
 
         # 要求: 识别准确率 >95%
         passed = score >= 0.95
@@ -217,7 +206,7 @@ class AcceptanceTest:
         details = f"准确率: {score:.1%}, 平均置信度: {avg_confidence:.1%}"
 
         if not passed:
-            low_conf_count = len(accuracy.get('low_confidence_regions', []))
+            low_conf_count = len(accuracy.get("low_confidence_regions", []))
             details += f", 低置信度区域: {low_conf_count}"
 
         return passed, details
@@ -227,16 +216,16 @@ class AcceptanceTest:
         response = requests.get(f"{self.base_url}/api/tasks/{self.task_id}/validate")
         validation = response.json()
 
-        layout = validation.get('layout_quality', {})
-        score = layout.get('score', 0)
-        ai_enhanced = layout.get('ai_enhancement_ratio', 0)
+        layout = validation.get("layout_quality", {})
+        score = layout.get("score", 0)
+        ai_enhanced = layout.get("ai_enhancement_ratio", 0)
 
         # 要求: 版面识别评分 ≥90%, 且启用了AI增强
         passed = score >= 0.90 and ai_enhanced > 0
 
         details = f"版面识别评分: {score:.1%}, AI增强比例: {ai_enhanced:.1%}"
 
-        warnings = layout.get('warnings', [])
+        warnings = layout.get("warnings", [])
         if warnings:
             details += f", 警告数: {len(warnings)}"
 
@@ -247,10 +236,10 @@ class AcceptanceTest:
         response = requests.get(f"{self.base_url}/api/tasks/{self.task_id}/validate")
         validation = response.json()
 
-        articles = validation.get('article_quality', {})
-        total_articles = articles.get('total_articles', 0)
-        multi_region = articles.get('multi_region_articles', 0)
-        cross_page = articles.get('cross_page_articles', 0)
+        articles = validation.get("article_quality", {})
+        total_articles = articles.get("total_articles", 0)
+        multi_region = articles.get("multi_region_articles", 0)
+        cross_page = articles.get("cross_page_articles", 0)
 
         # 要求: 能识别出文章并进行跨区域聚合
         passed = total_articles > 0
@@ -263,11 +252,11 @@ class AcceptanceTest:
         """测试5: 输出最终文档"""
         formats_available = []
 
-        for format_type in ['markdown', 'html', 'json']:
+        for format_type in ["markdown", "html", "json"]:
             try:
                 response = requests.get(
                     f"{self.base_url}/api/tasks/{self.task_id}/export/{format_type}",
-                    timeout=30
+                    timeout=30,
                 )
                 if response.status_code == 200:
                     formats_available.append(format_type.upper())
@@ -275,7 +264,7 @@ class AcceptanceTest:
                 pass
 
         # 要求: 至少支持 Markdown 和 HTML 格式
-        passed = 'MARKDOWN' in formats_available and 'HTML' in formats_available
+        passed = "MARKDOWN" in formats_available and "HTML" in formats_available
 
         details = f"可用格式: {', '.join(formats_available)}"
 
@@ -287,22 +276,22 @@ class AcceptanceTest:
             response = requests.post(
                 f"{self.base_url}/api/tasks/{self.task_id}/analysis",
                 json={
-                    'action': 'summary',
-                    'instruction': '请用一句话总结这份报纸的主要内容'
+                    "action": "summary",
+                    "instruction": "请用一句话总结这份报纸的主要内容",
                 },
-                timeout=60
+                timeout=60,
             )
 
             if response.status_code != 200:
                 return False, f"请求失败: {response.status_code}"
 
             data = response.json()
-            summary = data.get('answer') or data.get('summary', '')
+            summary = data.get("answer") or data.get("summary", "")
 
             # 要求: 能生成非空的总结
             passed = len(summary.strip()) > 0
 
-            preview = summary[:100] + '...' if len(summary) > 100 else summary
+            preview = summary[:100] + "..." if len(summary) > 100 else summary
             details = f"总结长度: {len(summary)}字符, 预览: {preview}"
 
             return passed, details

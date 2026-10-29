@@ -22,10 +22,17 @@ class OCRExecutionError(RuntimeError):
 
 
 class OCREngine:
-    def __init__(self, use_gpu: bool = False, backend: str = "auto", paddle_version: str | None = None):
+    def __init__(
+        self,
+        use_gpu: bool = False,
+        backend: str = "auto",
+        paddle_version: str | None = None,
+    ):
         self.use_gpu = use_gpu
         self.requested_backend = backend.strip().lower()
-        self.paddle_version = paddle_version or os.getenv("OCR_PADDLE_VERSION", "PP-OCRv5")
+        self.paddle_version = paddle_version or os.getenv(
+            "OCR_PADDLE_VERSION", "PP-OCRv5"
+        )
         self._paddle_lock = threading.Lock()
         self.backend = "unavailable"
         self.engine_ready = False
@@ -35,7 +42,11 @@ class OCREngine:
             self.load_error = f"Unsupported OCR backend: {backend}"
             return
 
-        candidates = ("paddleocr", "rapidocr") if self.requested_backend == "auto" else (self.requested_backend,)
+        candidates = (
+            ("paddleocr", "rapidocr")
+            if self.requested_backend == "auto"
+            else (self.requested_backend,)
+        )
         errors = []
         for candidate in candidates:
             try:
@@ -86,11 +97,15 @@ class OCREngine:
             "requested_backend": self.requested_backend,
             "ready": self.engine_ready,
             "gpu_requested": self.use_gpu,
-            "model_version": self.paddle_version if self.backend == "paddleocr" else None,
+            "model_version": (
+                self.paddle_version if self.backend == "paddleocr" else None
+            ),
             "error": self.load_error,
         }
 
-    def recognize(self, image: np.ndarray | str | Path, direction: str = "horizontal-ltr") -> Dict:
+    def recognize(
+        self, image: np.ndarray | str | Path, direction: str = "horizontal-ltr"
+    ) -> Dict:
         if not self.engine_ready:
             raise OCRUnavailableError(self.load_error or "No OCR backend is installed")
         source = str(image) if isinstance(image, (str, Path)) else image
@@ -111,10 +126,16 @@ class OCREngine:
 
         # Vertical crops are rotated by prepare_crop_for_ocr before reaching
         # the engine, so their OCR blocks are now horizontally ordered.
-        blocks = self._sort(blocks, "horizontal-ltr" if direction == "vertical-rtl" else direction)
+        blocks = self._sort(
+            blocks, "horizontal-ltr" if direction == "vertical-rtl" else direction
+        )
         for index, block in enumerate(blocks, 1):
             block["reading_order"] = index
-        confidence = sum(block["confidence"] for block in blocks) / len(blocks) if blocks else 0.0
+        confidence = (
+            sum(block["confidence"] for block in blocks) / len(blocks)
+            if blocks
+            else 0.0
+        )
         full_text = "\n".join(block["text"] for block in blocks)
         return {
             "text_blocks": blocks,
@@ -134,14 +155,28 @@ class OCREngine:
             if not item or len(item) < 3:
                 continue
             bbox, text, score = item[:3]
-            blocks.append({"block_id": index, "text": str(text), "confidence": float(score), "bbox": [[float(p[0]), float(p[1])] for p in bbox]})
+            blocks.append(
+                {
+                    "block_id": index,
+                    "text": str(text),
+                    "confidence": float(score),
+                    "bbox": [[float(p[0]), float(p[1])] for p in bbox],
+                }
+            )
         return blocks
 
     def _paddle_blocks(self, raw: List) -> List[Dict]:
         blocks = []
         for index, item in enumerate(raw, 1):
             bbox, result = item
-            blocks.append({"block_id": index, "text": str(result[0]), "confidence": float(result[1]), "bbox": [[float(p[0]), float(p[1])] for p in bbox]})
+            blocks.append(
+                {
+                    "block_id": index,
+                    "text": str(result[0]),
+                    "confidence": float(result[1]),
+                    "bbox": [[float(p[0]), float(p[1])] for p in bbox],
+                }
+            )
         return blocks
 
     def _paddle_v3_blocks(self, raw: List) -> List[Dict]:
@@ -184,31 +219,44 @@ class OCREngine:
                 if points.ndim != 2 or points.shape[1] < 2:
                     continue
                 confidence = float(scores[index]) if index < len(scores) else 0.0
-                blocks.append({
-                    "block_id": len(blocks) + 1,
-                    "text": str(text),
-                    "confidence": confidence,
-                    "bbox": [[float(point[0]), float(point[1])] for point in points],
-                })
+                blocks.append(
+                    {
+                        "block_id": len(blocks) + 1,
+                        "text": str(text),
+                        "confidence": confidence,
+                        "bbox": [
+                            [float(point[0]), float(point[1])] for point in points
+                        ],
+                    }
+                )
         return blocks
 
     def _sort(self, blocks: List[Dict], direction: str) -> List[Dict]:
         def center(block: Dict):
             points = block["bbox"]
-            return sum(p[0] for p in points) / len(points), sum(p[1] for p in points) / len(points)
+            return sum(p[0] for p in points) / len(points), sum(
+                p[1] for p in points
+            ) / len(points)
+
         if direction == "vertical-rtl":
-            return sorted(blocks, key=lambda block: (-center(block)[0], center(block)[1]))
+            return sorted(
+                blocks, key=lambda block: (-center(block)[0], center(block)[1])
+            )
         return sorted(blocks, key=lambda block: (center(block)[1], center(block)[0]))
 
 
-def prepare_crop_for_ocr(image: np.ndarray, direction: str = "horizontal-ltr") -> np.ndarray:
+def prepare_crop_for_ocr(
+    image: np.ndarray, direction: str = "horizontal-ltr"
+) -> np.ndarray:
     # OCR engines are much more reliable on horizontal lines than on narrow
     # traditional vertical columns. Rotate only the vertical crop; the region
     # metadata still preserves the original historical reading direction.
     if direction == "vertical-rtl":
         image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image.copy()
-    denoised = cv2.fastNlMeansDenoising(gray, None, h=5, templateWindowSize=7, searchWindowSize=21)
+    denoised = cv2.fastNlMeansDenoising(
+        gray, None, h=5, templateWindowSize=7, searchWindowSize=21
+    )
     enhanced = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(denoised)
     return cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
 

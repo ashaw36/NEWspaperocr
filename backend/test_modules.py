@@ -16,61 +16,60 @@ def test_document_composer():
     from document_composer import DocumentComposer
 
     # Mock data
-    task_data = {
-        'filename': '测试报纸.png',
-        'id': 'test-001'
-    }
+    task_data = {"filename": "测试报纸.png", "id": "test-001"}
 
-    pages = [{
-        'page_number': 1,
-        'regions': [
-            {
-                'article_id': 'article-1',
-                'label': 'title',
-                'corrected_text': '测试标题',
-                'confidence': 0.98
-            },
-            {
-                'article_id': 'article-1',
-                'label': 'body',
-                'corrected_text': '这是第一篇文章的正文内容。',
-                'confidence': 0.96
-            },
-            {
-                'article_id': 'article-2',
-                'label': 'body',
-                'corrected_text': '这是第二篇文章的内容。',
-                'confidence': 0.95
-            }
-        ]
-    }]
+    pages = [
+        {
+            "page_number": 1,
+            "regions": [
+                {
+                    "article_id": "article-1",
+                    "label": "title",
+                    "corrected_text": "测试标题",
+                    "confidence": 0.98,
+                },
+                {
+                    "article_id": "article-1",
+                    "label": "body",
+                    "corrected_text": "这是第一篇文章的正文内容。",
+                    "confidence": 0.96,
+                },
+                {
+                    "article_id": "article-2",
+                    "label": "body",
+                    "corrected_text": "这是第二篇文章的内容。",
+                    "confidence": 0.95,
+                },
+            ],
+        }
+    ]
 
     composer = DocumentComposer()
 
     # Test Markdown generation
     markdown = composer.compose_markdown(task_data, pages)
-    assert '测试报纸' in markdown
-    assert '测试标题' in markdown
-    assert '识别质量报告' in markdown
+    assert "测试报纸" in markdown
+    assert "测试标题" in markdown
+    assert "识别质量报告" in markdown
     print("✅ Markdown 生成正常")
 
     # Test HTML generation
     html = composer.compose_html(task_data, pages)
-    assert 'DOCTYPE html' in html
-    assert '测试标题' in html
-    assert 'article-title' in html
+    assert "DOCTYPE html" in html
+    assert "测试标题" in html
+    assert "article-title" in html
     print("✅ HTML 生成正常")
 
     # Test article extraction
     articles = composer._extract_articles(pages)
     assert len(articles) == 2
-    assert articles[0]['title'] == '测试标题'
+    assert articles[0]["title"] == "测试标题"
     print(f"✅ 文章提取正常: {len(articles)}篇")
 
     # Test quality calculation
     metrics = composer._calculate_quality(pages)
-    assert metrics['total_regions'] == 3
-    assert metrics['avg_confidence'] > 0.9
+    assert metrics["total_regions"] == 3
+    assert metrics["avg_confidence"] > 0.9
     print(f"✅ 质量指标计算正常: 平均置信度 {metrics['avg_confidence']:.1%}")
 
     print()
@@ -85,34 +84,36 @@ def test_quality_validator():
 
     # Mock task data
     task_data = {
-        'id': 'test-001',
-        'pages': [{
-            'page_number': 1,
-            'layout': {'source': 'ai+computer-vision'},
-            'regions': [
-                {
-                    'region_id': 'r1',
-                    'label': 'title',
-                    'article_id': 'a1',
-                    'corrected_text': '标题内容',
-                    'confidence': 0.98
-                },
-                {
-                    'region_id': 'r2',
-                    'label': 'body',
-                    'article_id': 'a1',
-                    'corrected_text': '正文内容' * 100,
-                    'confidence': 0.96
-                },
-                {
-                    'region_id': 'r3',
-                    'label': 'body',
-                    'article_id': 'a2',
-                    'corrected_text': '另一篇文章',
-                    'confidence': 0.95
-                }
-            ]
-        }]
+        "id": "test-001",
+        "pages": [
+            {
+                "page_number": 1,
+                "layout": {"source": "ai+computer-vision"},
+                "regions": [
+                    {
+                        "region_id": "r1",
+                        "label": "title",
+                        "article_id": "a1",
+                        "corrected_text": "标题内容",
+                        "confidence": 0.98,
+                    },
+                    {
+                        "region_id": "r2",
+                        "label": "body",
+                        "article_id": "a1",
+                        "corrected_text": "正文内容" * 100,
+                        "confidence": 0.96,
+                    },
+                    {
+                        "region_id": "r3",
+                        "label": "body",
+                        "article_id": "a2",
+                        "corrected_text": "另一篇文章",
+                        "confidence": 0.95,
+                    },
+                ],
+            }
+        ],
     }
 
     validator = QualityValidator(target_accuracy=0.95)
@@ -121,12 +122,12 @@ def test_quality_validator():
     report = validator.validate_task(task_data)
 
     # Check structure
-    assert 'passed' in report
-    assert 'completeness' in report
-    assert 'accuracy' in report
-    assert 'layout_quality' in report
-    assert 'article_quality' in report
-    assert 'recommendations' in report
+    assert "passed" in report
+    assert "completeness" in report
+    assert "accuracy" in report
+    assert "layout_quality" in report
+    assert "article_quality" in report
+    assert "recommendations" in report
 
     print(f"✅ 验证通过: {report['passed']}")
     print(f"✅ 完整性: {report['completeness']['score']:.1%}")
@@ -135,20 +136,20 @@ def test_quality_validator():
     print(f"✅ 识别文章: {report['article_quality']['total_articles']}篇")
 
     # Test individual checks
-    completeness = validator._check_completeness(task_data['pages'])
-    assert completeness['score'] == 1.0
+    completeness = validator._check_completeness(task_data["pages"])
+    assert completeness["score"] == 1.0
     print(f"✅ 完整性检查: {completeness['score']:.1%}")
 
-    accuracy = validator._estimate_accuracy(task_data['pages'])
-    assert accuracy['score'] > 0.9
+    accuracy = validator._estimate_accuracy(task_data["pages"])
+    assert accuracy["score"] > 0.9
     print(f"✅ 准确率估算: {accuracy['score']:.1%}")
 
-    layout = validator._check_layout_quality(task_data['pages'])
-    assert layout['score'] == 1.0
+    layout = validator._check_layout_quality(task_data["pages"])
+    assert layout["score"] == 1.0
     print(f"✅ 版面质量检查: {layout['score']:.1%}")
 
-    articles = validator._check_article_aggregation(task_data['pages'])
-    assert articles['total_articles'] == 2
+    articles = validator._check_article_aggregation(task_data["pages"])
+    assert articles["total_articles"] == 2
     print(f"✅ 文章聚合检查: {articles['total_articles']}篇")
 
     print()
@@ -164,10 +165,10 @@ def test_workflow_integration():
     # Check new methods exist
     workflow_instance = workflow.Workflow()
 
-    assert hasattr(workflow_instance, 'generate_final_document')
+    assert hasattr(workflow_instance, "generate_final_document")
     print("✅ generate_final_document() 方法存在")
 
-    assert hasattr(workflow_instance, 'validate_quality')
+    assert hasattr(workflow_instance, "validate_quality")
     print("✅ validate_quality() 方法存在")
 
     print()
@@ -224,6 +225,7 @@ def main():
             print(f"❌ 测试失败: {name}")
             print(f"   错误: {e}")
             import traceback
+
             traceback.print_exc()
             failed += 1
             print()

@@ -40,12 +40,14 @@ class DocumentComposer:
             for idx, article in enumerate(articles, 1):
                 lines.append(f"### {idx}. {article['title']}")
                 lines.append("")
-                if article.get('subtitle'):
+                if article.get("subtitle"):
                     lines.append(f"*{article['subtitle']}*")
                     lines.append("")
-                lines.append(article['content'])
+                lines.append(article["content"])
                 lines.append("")
-                lines.append(f"*[置信度: {article['confidence']:.1%}, 页码: {', '.join(map(str, article['pages']))}]*")
+                lines.append(
+                    f"*[置信度: {article['confidence']:.1%}, 页码: {', '.join(map(str, article['pages']))}]*"
+                )
                 lines.append("")
                 lines.append("---")
                 lines.append("")
@@ -58,7 +60,7 @@ class DocumentComposer:
             lines.append("")
 
             # Page text
-            page_text = page.get('corrected_text') or page.get('text', '')
+            page_text = page.get("corrected_text") or page.get("text", "")
             if page_text:
                 lines.append(page_text)
             else:
@@ -73,7 +75,9 @@ class DocumentComposer:
         metrics = self._calculate_quality(pages)
         lines.append(f"- **总字符数**: {metrics['total_chars']}")
         lines.append(f"- **平均置信度**: {metrics['avg_confidence']:.1%}")
-        lines.append(f"- **高质量区域**: {metrics['high_quality_regions']}/{metrics['total_regions']} ({metrics['high_quality_ratio']:.1%})")
+        lines.append(
+            f"- **高质量区域**: {metrics['high_quality_regions']}/{metrics['total_regions']} ({metrics['high_quality_ratio']:.1%})"
+        )
         lines.append(f"- **待人工复核区域**: {metrics['low_quality_regions']}")
         lines.append("")
 
@@ -85,7 +89,8 @@ class DocumentComposer:
         metrics = self._calculate_quality(pages)
 
         html_parts = []
-        html_parts.append("""<!DOCTYPE html>
+        html_parts.append(
+            """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -186,42 +191,63 @@ class DocumentComposer:
         </div>
     </div>
 """.format(
-            title=task_data.get('filename', '历史报纸'),
-            timestamp=datetime.now().strftime('%Y年%m月%d日 %H:%M'),
-            page_count=len(pages)
-        ))
+                title=task_data.get("filename", "历史报纸"),
+                timestamp=datetime.now().strftime("%Y年%m月%d日 %H:%M"),
+                page_count=len(pages),
+            )
+        )
 
         # Articles section
         if articles:
             html_parts.append('<div class="section">')
             for idx, article in enumerate(articles, 1):
-                conf = article['confidence']
-                quality_class = 'quality-high' if conf >= 0.9 else ('quality-medium' if conf >= 0.75 else 'quality-low')
+                conf = article["confidence"]
+                quality_class = (
+                    "quality-high"
+                    if conf >= 0.9
+                    else ("quality-medium" if conf >= 0.75 else "quality-low")
+                )
 
                 html_parts.append(f'<div class="article">')
-                html_parts.append(f'<div class="article-title">{idx}. {article["title"]}</div>')
-                if article.get('subtitle'):
-                    html_parts.append(f'<div class="article-subtitle">{article["subtitle"]}</div>')
-                html_parts.append(f'<div class="article-content">{article["content"].replace(chr(10), "<br>")}</div>')
+                html_parts.append(
+                    f'<div class="article-title">{idx}. {article["title"]}</div>'
+                )
+                if article.get("subtitle"):
+                    html_parts.append(
+                        f'<div class="article-subtitle">{article["subtitle"]}</div>'
+                    )
+                html_parts.append(
+                    f'<div class="article-content">{article["content"].replace(chr(10), "<br>")}</div>'
+                )
                 html_parts.append(f'<div class="article-meta">')
-                html_parts.append(f'<span class="quality-badge {quality_class}">置信度 {conf:.1%}</span> ')
+                html_parts.append(
+                    f'<span class="quality-badge {quality_class}">置信度 {conf:.1%}</span> '
+                )
                 html_parts.append(f'页码: {", ".join(map(str, article["pages"]))}')
-                html_parts.append(f'</div>')
-                html_parts.append('</div>')
-            html_parts.append('</div>')
+                html_parts.append(f"</div>")
+                html_parts.append("</div>")
+            html_parts.append("</div>")
 
         # Quality metrics
         html_parts.append('<div class="metrics">')
-        html_parts.append('<h2>📊 识别质量报告</h2>')
-        html_parts.append('<ul>')
-        html_parts.append(f'<li><strong>总字符数:</strong> {metrics["total_chars"]}</li>')
-        html_parts.append(f'<li><strong>平均置信度:</strong> {metrics["avg_confidence"]:.1%}</li>')
-        html_parts.append(f'<li><strong>高质量区域:</strong> {metrics["high_quality_regions"]}/{metrics["total_regions"]} ({metrics["high_quality_ratio"]:.1%})</li>')
-        html_parts.append(f'<li><strong>待复核区域:</strong> {metrics["low_quality_regions"]}</li>')
-        html_parts.append('</ul>')
-        html_parts.append('</div>')
+        html_parts.append("<h2>📊 识别质量报告</h2>")
+        html_parts.append("<ul>")
+        html_parts.append(
+            f'<li><strong>总字符数:</strong> {metrics["total_chars"]}</li>'
+        )
+        html_parts.append(
+            f'<li><strong>平均置信度:</strong> {metrics["avg_confidence"]:.1%}</li>'
+        )
+        html_parts.append(
+            f'<li><strong>高质量区域:</strong> {metrics["high_quality_regions"]}/{metrics["total_regions"]} ({metrics["high_quality_ratio"]:.1%})</li>'
+        )
+        html_parts.append(
+            f'<li><strong>待复核区域:</strong> {metrics["low_quality_regions"]}</li>'
+        )
+        html_parts.append("</ul>")
+        html_parts.append("</div>")
 
-        html_parts.append('</body></html>')
+        html_parts.append("</body></html>")
         return "".join(html_parts)
 
     def _extract_articles(self, pages: List[Dict]) -> List[Dict]:
@@ -230,65 +256,71 @@ class DocumentComposer:
         article_map = {}
 
         for page in pages:
-            page_num = page.get('page_number', 0)
-            regions = page.get('regions', [])
+            page_num = page.get("page_number", 0)
+            regions = page.get("regions", [])
 
             for region in regions:
-                article_id = region.get('article_id', f'page-{page_num}-unknown')
-                text = region.get('corrected_text') or region.get('raw_text', '')
-                label = region.get('label', 'body')
-                conf = region.get('confidence', 0.0)
+                article_id = region.get("article_id", f"page-{page_num}-unknown")
+                text = region.get("corrected_text") or region.get("raw_text", "")
+                label = region.get("label", "body")
+                conf = region.get("confidence", 0.0)
 
                 if article_id not in article_map:
                     article_map[article_id] = {
-                        'title': '',
-                        'subtitle': '',
-                        'content': '',
-                        'pages': set(),
-                        'confidences': [],
-                        'region_count': 0
+                        "title": "",
+                        "subtitle": "",
+                        "content": "",
+                        "pages": set(),
+                        "confidences": [],
+                        "region_count": 0,
                     }
 
                 article = article_map[article_id]
-                article['pages'].add(page_num)
-                article['confidences'].append(conf)
-                article['region_count'] += 1
+                article["pages"].add(page_num)
+                article["confidences"].append(conf)
+                article["region_count"] += 1
 
-                if label == 'title' and not article['title']:
-                    article['title'] = text.strip()
-                elif label == 'subtitle' and not article['subtitle']:
-                    article['subtitle'] = text.strip()
-                elif label in ('body', 'text'):
-                    if article['content']:
-                        article['content'] += '\n'
-                    article['content'] += text.strip()
+                if label == "title" and not article["title"]:
+                    article["title"] = text.strip()
+                elif label == "subtitle" and not article["subtitle"]:
+                    article["subtitle"] = text.strip()
+                elif label in ("body", "text"):
+                    if article["content"]:
+                        article["content"] += "\n"
+                    article["content"] += text.strip()
 
         # Convert to list and enrich
         articles = []
         for article_id, data in article_map.items():
-            if not data['content']:  # Skip articles with no body content
+            if not data["content"]:  # Skip articles with no body content
                 continue
 
             # Generate title if missing
-            if not data['title']:
-                content_preview = data['content'][:30].replace('\n', ' ')
-                data['title'] = f"{content_preview}..."
+            if not data["title"]:
+                content_preview = data["content"][:30].replace("\n", " ")
+                data["title"] = f"{content_preview}..."
 
             # Calculate average confidence
-            avg_conf = sum(data['confidences']) / len(data['confidences']) if data['confidences'] else 0.0
+            avg_conf = (
+                sum(data["confidences"]) / len(data["confidences"])
+                if data["confidences"]
+                else 0.0
+            )
 
-            articles.append({
-                'article_id': article_id,
-                'title': data['title'],
-                'subtitle': data['subtitle'],
-                'content': data['content'],
-                'pages': sorted(data['pages']),
-                'confidence': avg_conf,
-                'region_count': data['region_count']
-            })
+            articles.append(
+                {
+                    "article_id": article_id,
+                    "title": data["title"],
+                    "subtitle": data["subtitle"],
+                    "content": data["content"],
+                    "pages": sorted(data["pages"]),
+                    "confidence": avg_conf,
+                    "region_count": data["region_count"],
+                }
+            )
 
         # Sort by first page appearance
-        articles.sort(key=lambda a: (min(a['pages']), a['article_id']))
+        articles.sort(key=lambda a: (min(a["pages"]), a["article_id"]))
         return articles
 
     def _calculate_quality(self, pages: List[Dict]) -> Dict:
@@ -301,14 +333,14 @@ class DocumentComposer:
         confidence_count = 0
 
         for page in pages:
-            regions = page.get('regions', [])
+            regions = page.get("regions", [])
             total_regions += len(regions)
 
             for region in regions:
-                text = region.get('corrected_text') or region.get('raw_text', '')
+                text = region.get("corrected_text") or region.get("raw_text", "")
                 total_chars += len(text)
 
-                conf = region.get('confidence', 0.0)
+                conf = region.get("confidence", 0.0)
                 if conf > 0:
                     confidence_sum += conf
                     confidence_count += 1
@@ -318,14 +350,18 @@ class DocumentComposer:
                     elif conf < 0.75:
                         low_quality_regions += 1
 
-        avg_confidence = confidence_sum / confidence_count if confidence_count > 0 else 0.0
-        high_quality_ratio = high_quality_regions / total_regions if total_regions > 0 else 0.0
+        avg_confidence = (
+            confidence_sum / confidence_count if confidence_count > 0 else 0.0
+        )
+        high_quality_ratio = (
+            high_quality_regions / total_regions if total_regions > 0 else 0.0
+        )
 
         return {
-            'total_chars': total_chars,
-            'total_regions': total_regions,
-            'high_quality_regions': high_quality_regions,
-            'low_quality_regions': low_quality_regions,
-            'avg_confidence': avg_confidence,
-            'high_quality_ratio': high_quality_ratio
+            "total_chars": total_chars,
+            "total_regions": total_regions,
+            "high_quality_regions": high_quality_regions,
+            "low_quality_regions": low_quality_regions,
+            "avg_confidence": avg_confidence,
+            "high_quality_ratio": high_quality_ratio,
         }

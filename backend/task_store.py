@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
-
 TASK_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -97,7 +96,7 @@ class TaskStore:
                                 stream.flush()
                                 os.fsync(stream.fileno())
                             break
-                        time.sleep(0.05 * (2 ** attempt))
+                        time.sleep(0.05 * (2**attempt))
             finally:
                 temp_path.unlink(missing_ok=True)
         return task
@@ -109,7 +108,9 @@ class TaskStore:
             return self.save(task)
 
     def list_recent(self, limit: int = 20) -> Iterable[Dict[str, Any]]:
-        manifests = sorted(self.root.glob("*/task.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        manifests = sorted(
+            self.root.glob("*/task.json"), key=lambda p: p.stat().st_mtime, reverse=True
+        )
         for path in manifests[:limit]:
             try:
                 with path.open("r", encoding="utf-8") as stream:

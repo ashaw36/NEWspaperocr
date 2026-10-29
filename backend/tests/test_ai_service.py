@@ -10,7 +10,9 @@ class AIServiceTests(unittest.TestCase):
         service = AIService.__new__(AIService)
         service._text_json = Mock(return_value={"summary": "中文摘要"})
 
-        result = service.summarize_document("A historical newspaper article", "Explain the key points")
+        result = service.summarize_document(
+            "A historical newspaper article", "Explain the key points"
+        )
 
         self.assertEqual({"summary": "中文摘要"}, result)
         prompt = service._text_json.call_args.args[0]
@@ -50,7 +52,9 @@ class AIServiceTests(unittest.TestCase):
         service = AIService.__new__(AIService)
         service.backend = "deepseek"
         service.model = "deepseek-chat"
-        service.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        service.client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+        )
         service._require_client = Mock()
 
         with self.assertRaises(AIInsufficientBalanceError) as raised:
@@ -68,7 +72,9 @@ class AIServiceTests(unittest.TestCase):
         service.backend = "deepseek"
         service.model = "deepseek-chat"
         service.vision_model = "deepseek-flash"
-        service.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        service.client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+        )
         service._require_client = Mock()
         service._encode_vision_image = Mock(return_value=("image/jpeg", "encoded"))
 
@@ -81,7 +87,9 @@ class AIServiceTests(unittest.TestCase):
         service = AIService.__new__(AIService)
         service.vision_model = "deepseek-flash"
         service.client = object()
-        service._vision_json = Mock(side_effect=AIInsufficientBalanceError("AI 服务账户余额不足"))
+        service._vision_json = Mock(
+            side_effect=AIInsufficientBalanceError("AI 服务账户余额不足")
+        )
         service._text_json = Mock()
 
         with self.assertRaises(AIInsufficientBalanceError):

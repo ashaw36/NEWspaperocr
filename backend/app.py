@@ -17,7 +17,6 @@ from ocr_engine import OCREngine
 from task_store import TaskNotFoundError, TaskStore
 from workflow import DocumentWorkflow, WorkflowStateError
 
-
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_ROOT = BASE_DIR / "uploads"
 RESULT_ROOT = BASE_DIR / "results_v2"
@@ -26,33 +25,50 @@ ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "bmp", "tif", "tiff"}
 app = Flask(__name__)
 app.config.update(MAX_CONTENT_LENGTH=100 * 1024 * 1024, JSON_AS_ASCII=False)
 # Allow CORS from all origins including file:// protocol (for local HTML files)
-CORS(app, resources={
-    r"/api/*": {
-        "origins": "*",
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"],
-        "expose_headers": ["Content-Type"],
-        "supports_credentials": False
-    }
-})
+CORS(
+    app,
+    resources={
+        r"/api/*": {
+            "origins": "*",
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"],
+            "expose_headers": ["Content-Type"],
+            "supports_credentials": False,
+        }
+    },
+)
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 
 store = TaskStore(RESULT_ROOT)
 for interrupted in store.list_recent(limit=1000):
-    if interrupted.get("status") in {"layout_running", "ocr_queued", "ocr_running", "correction_queued", "correction_running"}:
+    if interrupted.get("status") in {
+        "layout_running",
+        "ocr_queued",
+        "ocr_running",
+        "correction_queued",
+        "correction_running",
+    }:
         interrupted.update(
             status="interrupted",
-            error={"message": "服务曾在任务运行时停止。已完成的分页结果仍然保留，可以重新启动该阶段。", "type": "InterruptedTask"},
+            error={
+                "message": "服务曾在任务运行时停止。已完成的分页结果仍然保留，可以重新启动该阶段。",
+                "type": "InterruptedTask",
+            },
         )
         store.save(interrupted)
 ocr_engine = OCREngine(
     use_gpu=os.getenv("OCR_USE_GPU", "false").lower() == "true",
-    backend=os.getenv("OCR_BACKEND", "rapidocr"),  # 强制使用 RapidOCR 避免 PaddleOCR 运行时错误
+    backend=os.getenv(
+        "OCR_BACKEND", "rapidocr"
+    ),  # 强制使用 RapidOCR 避免 PaddleOCR 运行时错误
     paddle_version=os.getenv("OCR_PADDLE_VERSION", "PP-OCRv5"),
 )
 ai_service = AIService()
 workflow = DocumentWorkflow(store, ocr_engine, ai_service)
-executor = ThreadPoolExecutor(max_workers=max(1, int(os.getenv("WORKFLOW_WORKERS", "2"))), thread_name_prefix="newspaper-ocr")
+executor = ThreadPoolExecutor(
+    max_workers=max(1, int(os.getenv("WORKFLOW_WORKERS", "2"))),
+    thread_name_prefix="newspaper-ocr",
+)
 
 
 def allowed_file(filename: str) -> bool:
@@ -87,7 +103,13 @@ def demo():
 
 @app.get("/api/health")
 def health():
-    return jsonify({"status": "healthy" if ocr_engine.engine_ready else "degraded", "ocr": ocr_engine.health(), "ai": ai_service.health()})
+    return jsonify(
+        {
+            "status": "healthy" if ocr_engine.engine_ready else "degraded",
+            "ocr": ocr_engine.health(),
+            "ai": ai_service.health(),
+        }
+    )
 
 
 @app.get("/api/tasks")
@@ -114,7 +136,8 @@ def create_task():
     options = {
         "dpi": dpi,
         "max_pages": max_pages,
-        "ai_layout": request.form.get("ai_layout", "true").lower() in {"1", "true", "yes", "on"},
+        "ai_layout": request.form.get("ai_layout", "true").lower()
+        in {"1", "true", "yes", "on"},
     }
     task = store.create(upload.filename, options)
     extension = Path(upload.filename).suffix.lower()
@@ -153,7 +176,9 @@ def update_layout(task_id):
 @app.post("/api/tasks/<task_id>/layout/expand")
 def expand_layout(task_id):
     task = workflow.expand_layout(task_id)
-    executor.submit(workflow.analyze_layout, task_id, int(task.get("document_page_count") or 1))
+    executor.submit(
+        workflow.analyze_layout, task_id, int(task.get("document_page_count") or 1)
+    )
     return jsonify(public_task(store.load(task_id))), 202
 
 
@@ -252,10 +277,13 @@ def export(task_id, kind):
         "corrected": ("corrected.txt", "text/plain"),
         "json": ("corrected.json", "application/json"),
         "markdown": ("final_document.md", "text/markdown"),
-        "html": ("final_document.html", "text/html")
+        "html": ("final_document.html", "text/html"),
     }
     if kind not in candidates:
-        return jsonify({"error": "kind must be raw, corrected, json, markdown or html"}), 400
+        return (
+            jsonify({"error": "kind must be raw, corrected, json, markdown or html"}),
+            400,
+        )
 
     name, mimetype = candidates[kind]
     path = task_dir / name
@@ -271,7 +299,12 @@ def export(task_id, kind):
         path = task_dir / "ocr.json"
     if not path.exists():
         return jsonify({"error": "Export is not ready"}), 404
-    return send_file(path, as_attachment=True, download_name=f"{task_id}_{path.name}", mimetype=mimetype)
+    return send_file(
+        path,
+        as_attachment=True,
+        download_name=f"{task_id}_{path.name}",
+        mimetype=mimetype,
+    )
 
 
 @app.get("/api/tasks/<task_id>/validate")
@@ -315,4 +348,9 @@ def unexpected_error(error):
 
 
 if __name__ == "__main__":
-    app.run(host=os.getenv("FLASK_HOST", "127.0.0.1"), port=int(os.getenv("FLASK_PORT", "5000")), debug=os.getenv("FLASK_DEBUG", "false").lower() == "true", threaded=True)
+    app.run(
+        host=os.getenv("FLASK_HOST", "127.0.0.1"),
+        port=int(os.getenv("FLASK_PORT", "5000")),
+        debug=os.getenv("FLASK_DEBUG", "false").lower() == "true",
+        threaded=True,
+    )

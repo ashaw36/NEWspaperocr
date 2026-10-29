@@ -116,9 +116,11 @@ class OCRSystemTester:
             response = requests.get(f"{self.base_url}/api/health", timeout=5)
             if response.status_code == 200:
                 health = response.json()
-                print(f"   OCR引擎: {health['ocr']['backend']} ({health['ocr']['model_version']})")
+                print(
+                    f"   OCR引擎: {health['ocr']['backend']} ({health['ocr']['model_version']})"
+                )
                 print(f"   AI服务: {health['ai']['backend']} ({health['ai']['model']})")
-                return health['status'] == 'healthy'
+                return health["status"] == "healthy"
         except Exception as e:
             print(f"   错误: {e}")
         return False
@@ -126,17 +128,14 @@ class OCRSystemTester:
     def _upload_file(self, image_path: str):
         """Upload test file."""
         try:
-            with open(image_path, 'rb') as f:
-                files = {'file': (Path(image_path).name, f, 'image/png')}
-                data = {'ai_layout': 'true'}
+            with open(image_path, "rb") as f:
+                files = {"file": (Path(image_path).name, f, "image/png")}
+                data = {"ai_layout": "true"}
                 response = requests.post(
-                    f"{self.base_url}/api/tasks",
-                    files=files,
-                    data=data,
-                    timeout=30
+                    f"{self.base_url}/api/tasks", files=files, data=data, timeout=30
                 )
                 if response.status_code == 202:
-                    return response.json()['id']
+                    return response.json()["id"]
                 else:
                     print(f"   错误: {response.text}")
         except Exception as e:
@@ -150,15 +149,17 @@ class OCRSystemTester:
 
         while time.time() - start_time < timeout:
             try:
-                response = requests.get(f"{self.base_url}/api/tasks/{self.task_id}", timeout=5)
+                response = requests.get(
+                    f"{self.base_url}/api/tasks/{self.task_id}", timeout=5
+                )
                 if response.status_code == 200:
                     task = response.json()
-                    status = task.get('status')
+                    status = task.get("status")
 
                     # Print progress if changed
-                    progress = task.get('progress', {})
+                    progress = task.get("progress", {})
                     if progress != last_progress:
-                        message = progress.get('message', '')
+                        message = progress.get("message", "")
                         if message:
                             print(f"   进度: {message}")
                         last_progress = progress
@@ -166,7 +167,7 @@ class OCRSystemTester:
                     if status == target_status:
                         return True
 
-                    if status and status.startswith('error'):
+                    if status and status.startswith("error"):
                         print(f"   任务失败: {task.get('error', 'Unknown error')}")
                         return False
 
@@ -181,9 +182,7 @@ class OCRSystemTester:
         """Start OCR processing."""
         try:
             response = requests.post(
-                f"{self.base_url}/api/tasks/{self.task_id}/ocr",
-                json={},
-                timeout=10
+                f"{self.base_url}/api/tasks/{self.task_id}/ocr", json={}, timeout=10
             )
             return response.status_code == 202
         except Exception as e:
@@ -196,7 +195,7 @@ class OCRSystemTester:
             response = requests.post(
                 f"{self.base_url}/api/tasks/{self.task_id}/correction",
                 json={},
-                timeout=10
+                timeout=10,
             )
             return response.status_code == 202
         except Exception as e:
@@ -207,8 +206,7 @@ class OCRSystemTester:
         """Validate OCR quality."""
         try:
             response = requests.get(
-                f"{self.base_url}/api/tasks/{self.task_id}/validate",
-                timeout=10
+                f"{self.base_url}/api/tasks/{self.task_id}/validate", timeout=10
             )
             if response.status_code == 200:
                 return response.json()
@@ -222,11 +220,11 @@ class OCRSystemTester:
             response = requests.post(
                 f"{self.base_url}/api/tasks/{self.task_id}/analysis",
                 json={"action": "summary", "instruction": "请总结这份报纸的主要内容"},
-                timeout=60
+                timeout=60,
             )
             if response.status_code == 200:
                 result = response.json()
-                return result.get('answer', result.get('summary', ''))
+                return result.get("answer", result.get("summary", ""))
         except Exception as e:
             print(f"   错误: {e}")
         return None
@@ -236,16 +234,16 @@ class OCRSystemTester:
         exports = {}
         task_dir = Path(f"./data/tasks/{self.task_id}")
 
-        for format_name in ['markdown', 'html', 'json']:
+        for format_name in ["markdown", "html", "json"]:
             try:
                 response = requests.get(
                     f"{self.base_url}/api/tasks/{self.task_id}/export/{format_name}",
-                    timeout=30
+                    timeout=30,
                 )
                 if response.status_code == 200:
                     # Save to task directory
                     output_path = task_dir / f"final_document.{format_name}"
-                    if format_name == 'json':
+                    if format_name == "json":
                         output_path = task_dir / "corrected.json"
 
                     if output_path.exists():
@@ -258,38 +256,40 @@ class OCRSystemTester:
 
     def _print_validation_report(self, validation: dict):
         """Print validation report."""
-        passed = validation.get('passed', False)
+        passed = validation.get("passed", False)
         print(f"   验收结果: {'✅ 通过' if passed else '❌ 未通过'}")
         print()
 
         # Completeness
-        completeness = validation.get('completeness', {})
+        completeness = validation.get("completeness", {})
         print(f"   📄 内容完整性: {completeness.get('score', 0):.1%}")
         print(f"      - 总区域数: {completeness.get('total_regions', 0)}")
         print(f"      - 已处理: {completeness.get('processed_regions', 0)}")
         print(f"      - 空白: {completeness.get('empty_regions', 0)}")
 
         # Accuracy
-        accuracy = validation.get('accuracy', {})
+        accuracy = validation.get("accuracy", {})
         print(f"\n   🎯 识别准确率: {accuracy.get('score', 0):.1%} (目标: ≥95%)")
         print(f"      - 平均置信度: {accuracy.get('avg_confidence', 0):.1%}")
         print(f"      - 总字符数: {accuracy.get('total_chars', 0)}")
         print(f"      - 不确定字符: {accuracy.get('uncertain_char_count', 0)}")
 
         # Layout
-        layout = validation.get('layout_quality', {})
+        layout = validation.get("layout_quality", {})
         print(f"\n   📐 版面识别: {layout.get('score', 0):.1%}")
-        print(f"      - AI增强页面: {layout.get('ai_enhanced_pages', 0)}/{validation.get('completeness', {}).get('total_regions', 0) // 3}")
+        print(
+            f"      - AI增强页面: {layout.get('ai_enhanced_pages', 0)}/{validation.get('completeness', {}).get('total_regions', 0) // 3}"
+        )
 
         # Articles
-        articles = validation.get('article_quality', {})
+        articles = validation.get("article_quality", {})
         print(f"\n   📝 文章聚合:")
         print(f"      - 识别文章数: {articles.get('total_articles', 0)}")
         print(f"      - 跨区域文章: {articles.get('multi_region_articles', 0)}")
         print(f"      - 跨页面文章: {articles.get('cross_page_articles', 0)}")
 
         # Recommendations
-        recommendations = validation.get('recommendations', [])
+        recommendations = validation.get("recommendations", [])
         if recommendations:
             print(f"\n   💡 建议:")
             for rec in recommendations:

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 """Test actual OCR speed"""
+
 import os
 import sys
 import time
@@ -18,7 +19,7 @@ if not Path(test_image).exists():
 
 print("Initializing PaddleOCR...")
 start_init = time.time()
-ocr = PaddleOCR(lang='ch', ocr_version='PP-OCRv5')
+ocr = PaddleOCR(lang="ch", ocr_version="PP-OCRv5")
 init_time = time.time() - start_init
 print(f"Initialization: {init_time:.1f}s\n")
 

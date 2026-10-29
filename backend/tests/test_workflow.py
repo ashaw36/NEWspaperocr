@@ -47,13 +47,23 @@ class LayoutEngineTests(unittest.TestCase):
         result = self.engine.propose(image, 1)
         self.assertEqual("grid", result["layout_type"])
         self.assertEqual(4, len(result["regions"]))
-        self.assertTrue(all(region["label"] == "advertisement" for region in result["regions"]))
+        self.assertTrue(
+            all(region["label"] == "advertisement" for region in result["regions"])
+        )
 
     def test_normalizes_user_regions(self):
-        regions = self.engine.normalize_regions([{
-            "id": "r1", "order": "2", "label": "body", "article_id": "article-a",
-            "direction": "vertical-rtl", "bbox": {"x": -0.1, "y": 0.2, "width": 1.4, "height": 0.5},
-        }])
+        regions = self.engine.normalize_regions(
+            [
+                {
+                    "id": "r1",
+                    "order": "2",
+                    "label": "body",
+                    "article_id": "article-a",
+                    "direction": "vertical-rtl",
+                    "bbox": {"x": -0.1, "y": 0.2, "width": 1.4, "height": 0.5},
+                }
+            ]
+        )
         self.assertEqual(0.0, regions[0]["bbox"]["x"])
         self.assertEqual(1.0, regions[0]["bbox"]["width"])
         self.assertEqual(2, regions[0]["order"])
@@ -84,17 +94,25 @@ class LayoutEngineTests(unittest.TestCase):
         self.assertEqual(1, len(blocks))
         self.assertEqual("古籍文字", blocks[0]["text"])
         self.assertEqual(0.93, blocks[0]["confidence"])
-        self.assertEqual([[1.0, 2.0], [11.0, 2.0], [11.0, 12.0], [1.0, 12.0]], blocks[0]["bbox"])
+        self.assertEqual(
+            [[1.0, 2.0], [11.0, 2.0], [11.0, 12.0], [1.0, 12.0]], blocks[0]["bbox"]
+        )
 
     def test_paddle_v3_result_accepts_rectangle_boxes(self):
         engine = OCREngine.__new__(OCREngine)
-        blocks = engine._paddle_v3_blocks([{
-            "rec_boxes": [[2, 3, 18, 24]],
-            "rec_texts": ["报纸"],
-            "rec_scores": [0.8],
-        }])
+        blocks = engine._paddle_v3_blocks(
+            [
+                {
+                    "rec_boxes": [[2, 3, 18, 24]],
+                    "rec_texts": ["报纸"],
+                    "rec_scores": [0.8],
+                }
+            ]
+        )
 
-        self.assertEqual([[2.0, 3.0], [18.0, 3.0], [18.0, 24.0], [2.0, 24.0]], blocks[0]["bbox"])
+        self.assertEqual(
+            [[2.0, 3.0], [18.0, 3.0], [18.0, 24.0], [2.0, 24.0]], blocks[0]["bbox"]
+        )
 
 
 class TaskStoreTests(unittest.TestCase):
@@ -136,14 +154,16 @@ class DocumentWorkflowTests(unittest.TestCase):
             "height": 120,
             "image_url": f"/pages/{number}",
             "layout": {
-                "regions": [{
-                    "id": f"r{number}",
-                    "order": 1,
-                    "label": "body",
-                    "article_id": f"article-{number}",
-                    "direction": "vertical-rtl",
-                    "bbox": {"x": 0.1, "y": 0.1, "width": 0.8, "height": 0.8},
-                }],
+                "regions": [
+                    {
+                        "id": f"r{number}",
+                        "order": 1,
+                        "label": "body",
+                        "article_id": f"article-{number}",
+                        "direction": "vertical-rtl",
+                        "bbox": {"x": 0.1, "y": 0.1, "width": 0.8, "height": 0.8},
+                    }
+                ],
             },
         }
 
@@ -167,7 +187,9 @@ class DocumentWorkflowTests(unittest.TestCase):
         self.workflow.queue_correction(task_id, [1, 2])
         self.workflow.run_correction(task_id, [1, 2])
 
-        result = self.workflow.update_ocr_text(task_id, [{"page_number": 1, "raw_text": "人工修订文本"}])
+        result = self.workflow.update_ocr_text(
+            task_id, [{"page_number": 1, "raw_text": "人工修订文本"}]
+        )
         page_one = next(page for page in result["pages"] if page["page_number"] == 1)
         corrected = self.workflow.result(task_id, "correction")
         self.assertEqual("人工修订文本", page_one["raw_text"])
@@ -188,13 +210,17 @@ class DocumentWorkflowTests(unittest.TestCase):
         task_id = self.task["id"]
         self.workflow.queue_ocr(task_id, [1])
         self.workflow.run_ocr(task_id, [1])
-        self.workflow.update_ocr_text(task_id, [{"page_number": 1, "raw_text": "人工修订原文"}])
+        self.workflow.update_ocr_text(
+            task_id, [{"page_number": 1, "raw_text": "人工修订原文"}]
+        )
         self.workflow.queue_correction(task_id, [1])
         self.workflow.run_correction(task_id, [1])
         generated = self.workflow.result(task_id, "correction")["pages"][0]
         self.assertEqual("校正：人工修订原文", generated["corrected_text"])
 
-        saved = self.workflow.update_corrected_text(task_id, [{"page_number": 1, "corrected_text": "人工最终定稿"}])
+        saved = self.workflow.update_corrected_text(
+            task_id, [{"page_number": 1, "corrected_text": "人工最终定稿"}]
+        )
         self.assertTrue(saved["pages"][0]["manually_edited"])
         self.assertIn("人工最终定稿", self.workflow.document_text(task_id))
 
