@@ -206,6 +206,298 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
         result.setdefault("transcription_mode", "text")
         return result
 
+    def aggregate_whole_page(
+        self,
+        page_number: int,
+        blocks: List[Dict],
+        columns: List[Dict],
+        page_image: str | Path | None = None,
+        direction: str = "vertical-rtl",
+    ) -> Dict:
+        """跨栏聚合整页 OCR 文本块为结构化文章；失败时由调用方降级，不强制抛错。"""
+        compact_blocks = [
+            {
+                "block_id": block.get("block_id", index),
+                "text": block.get("text", ""),
+                "confidence": block.get("confidence", 0),
+                "bbox": block.get("bbox"),
+                "column_index": block.get("column_index", 0),
+            }
+            for index, block in enumerate(blocks, 1)
+        ]
+        total_chars = sum(len(item["text"]) for item in compact_blocks)
+        if total_chars > 60000 and columns:
+            return self._aggregate_whole_page_chunked(
+                page_number, compact_blocks, columns, page_image, direction
+            )
+        return self._aggregate_whole_page_once(
+            page_number, compact_blocks, columns, page_image, direction
+        )
+
+    def aggregate_by_regions(
+        self,
+        page_number: int,
+        regions_with_ordered_text: List[Dict],
+        page_image: str | Path | None = None,
+        direction: str = "vertical-rtl",
+    ) -> Dict:
+        """在已按视觉版面分区、栏内已排序的文本上做跨栏归并与纠错。"""
+        compact = [
+            {
+                "region_id": region.get("region_id"),
+                "order": region.get("order"),
+                "label": region.get("label"),
+                "article_id": region.get("article_id"),
+                "direction": region.get("direction") or direction,
+                "text": region.get("raw_text")
+                or region.get("final_region_text")
+                or "",
+                "confidence": region.get("confidence", 0),
+            }
+            for region in regions_with_ordered_text
+            if (region.get("raw_text") or region.get("final_region_text") or "").strip()
+        ]
+        total_chars = sum(len(item["text"]) for item in compact)
+        if total_chars > 60000 and compact:
+            return self._aggregate_by_regions_chunked(
+                page_number, compact, page_image, direction
+            )
+        return self._aggregate_by_regions_once(
+            page_number, compact, page_image, direction
+        )
+
+    def _aggregate_by_regions_prompt(
+        self, page_number: int, regions: List[Dict], direction: str
+    ) -> str:
+        return f"""你是民国报纸 OCR 后处理专家。输入是第 {page_number} 页已按视觉版面分区、且栏内已按阅读方向排好序的竖排繁体文本。
+页面默认阅读方向：{direction}（vertical-rtl = 栏右→左、栏内上→下；horizontal-ltr = 行上→下、行内左→右）。
+每个 region 已带 article_id / label / direction / 排序后文本；同一 article_id 的多个 region 通常是同一篇文章的相邻栏。
+
+任务：
+1. 跨栏归并：按 article_id 与语义将相关 region 合并为完整文章；区分标题/副标题/正文/报头(masthead)/广告。
+2. 纠错：纠正明显 OCR 错字，但必须保留繁体、历史措辞与人名地名；不现代化、不臆造；不可读处保留或使用 □。
+3. 定标题：从已分组文本中识别标题/副标题，不要凭空编造标题。
+4. 按报纸阅读顺序输出文章。
+
+只返回一个 JSON 对象：
+{{"articles":[{{"id":"article-1","title":"...","subtitle":"...","body":"...","direction":"{direction}"}}],"corrected_text":"整页按阅读顺序的校正全文","corrections":[{{"region_id":"...","original":"...","corrected":"...","reason":"...","confidence":0.0}}],"warnings":[]}}
+
+已分区且已排序的区域文本：
+{json.dumps(regions, ensure_ascii=False)}"""
+
+    def _aggregate_by_regions_once(
+        self,
+        page_number: int,
+        regions: List[Dict],
+        page_image: str | Path | None,
+        direction: str,
+    ) -> Dict:
+        prompt = self._aggregate_by_regions_prompt(page_number, regions, direction)
+        if page_image and self.supports_vision:
+            try:
+                result = self._vision_json(page_image, prompt, max_tokens=8000)
+                result.setdefault("transcription_mode", "vision-regions")
+                return self._normalize_aggregate_result(result, direction)
+            except AIInsufficientBalanceError:
+                raise
+            except Exception:
+                pass
+        result = self._text_json(prompt, max_tokens=8000)
+        result.setdefault("transcription_mode", "text-regions")
+        return self._normalize_aggregate_result(result, direction)
+
+    def _aggregate_by_regions_chunked(
+        self,
+        page_number: int,
+        regions: List[Dict],
+        page_image: str | Path | None,
+        direction: str,
+    ) -> Dict:
+        """大页保护：按 article_id 分组调用后合并。"""
+        by_article: Dict[str, List[Dict]] = {}
+        for region in regions:
+            key = str(region.get("article_id") or region.get("region_id") or "loose")
+            by_article.setdefault(key, []).append(region)
+
+        merged_articles: List[Dict] = []
+        merged_corrections: List[Dict] = []
+        warnings: List[str] = []
+        corrected_parts: List[str] = []
+        mode = "text-regions"
+
+        for article_id, group in by_article.items():
+            group = sorted(group, key=lambda item: int(item.get("order") or 0))
+            try:
+                part = self._aggregate_by_regions_once(
+                    page_number, group, page_image=None, direction=direction
+                )
+            except Exception as error:
+                warnings.append(f"文章组 {article_id} 聚合失败: {error}")
+                corrected_parts.append("\n".join(r["text"] for r in group))
+                continue
+            mode = part.get("transcription_mode", mode)
+            for article in part.get("articles") or []:
+                if not article.get("id"):
+                    article["id"] = article_id
+                merged_articles.append(article)
+            merged_corrections.extend(part.get("corrections") or [])
+            warnings.extend(part.get("warnings") or [])
+            if part.get("corrected_text"):
+                corrected_parts.append(part["corrected_text"])
+
+        return self._normalize_aggregate_result(
+            {
+                "articles": merged_articles,
+                "corrected_text": "\n\n".join(corrected_parts),
+                "corrections": merged_corrections,
+                "warnings": warnings
+                + ["大页已按 article_id 分块聚合后合并；请复核跨组文章边界。"],
+                "transcription_mode": mode,
+            },
+            direction,
+        )
+
+    def _aggregate_prompt(
+        self,
+        page_number: int,
+        blocks: List[Dict],
+        columns: List[Dict],
+        direction: str,
+    ) -> str:
+        return f"""你是民国报纸 OCR 后处理专家。输入是第 {page_number} 页竖排繁体民国报纸的整页 OCR 文本块（含坐标与列索引）。
+阅读方向：{direction}（列右→左、列内上→下；column_index 越小越靠右）。
+列带元信息（仅作阅读顺序提示，允许不完美）：
+{json.dumps(columns, ensure_ascii=False)}
+
+任务：
+1. 跨栏/跨区域将文本块聚合为完整文章；区分标题/副标题/正文/报头(masthead)/广告。
+2. 纠正明显 OCR 错字（例如「齊爕元」→「齊燮元」），但必须：保留繁体、保留历史措辞与人名地名、不现代化、不臆造、不可读处用 □ 表示。
+3. 按报纸阅读顺序排列文章。
+
+只返回一个 JSON 对象：
+{{"articles":[{{"id":"article-1","title":"...","subtitle":"...","body":"...","direction":"{direction}"}}],"corrected_text":"整页按阅读顺序的校正全文","corrections":[{{"block_id":1,"original":"...","corrected":"...","reason":"...","confidence":0.0}}],"warnings":[]}}
+
+OCR 文本块：
+{json.dumps(blocks, ensure_ascii=False)}"""
+
+    def _aggregate_whole_page_once(
+        self,
+        page_number: int,
+        blocks: List[Dict],
+        columns: List[Dict],
+        page_image: str | Path | None,
+        direction: str,
+    ) -> Dict:
+        prompt = self._aggregate_prompt(page_number, blocks, columns, direction)
+        if page_image and self.supports_vision:
+            try:
+                result = self._vision_json(page_image, prompt, max_tokens=8000)
+                result.setdefault("transcription_mode", "vision")
+                return self._normalize_aggregate_result(result, direction)
+            except AIInsufficientBalanceError:
+                raise
+            except Exception:
+                pass
+        result = self._text_json(prompt, max_tokens=8000)
+        result.setdefault("transcription_mode", "text")
+        return self._normalize_aggregate_result(result, direction)
+
+    def _aggregate_whole_page_chunked(
+        self,
+        page_number: int,
+        blocks: List[Dict],
+        columns: List[Dict],
+        page_image: str | Path | None,
+        direction: str,
+    ) -> Dict:
+        """大页保护：按列分块调用后合并 articles / corrections。"""
+        by_column: Dict[int, List[Dict]] = {}
+        for block in blocks:
+            by_column.setdefault(int(block.get("column_index", 0)), []).append(block)
+
+        merged_articles: List[Dict] = []
+        merged_corrections: List[Dict] = []
+        warnings: List[str] = []
+        corrected_parts: List[str] = []
+        mode = "text"
+
+        # 列索引升序 = 右→左阅读顺序
+        for column_index in sorted(by_column.keys()):
+            col_blocks = by_column[column_index]
+            col_meta = [c for c in columns if c.get("column_index") == column_index]
+            try:
+                part = self._aggregate_whole_page_once(
+                    page_number,
+                    col_blocks,
+                    col_meta or [{"column_index": column_index}],
+                    page_image=None,  # 分块时避免重复传大图
+                    direction=direction,
+                )
+            except Exception as error:
+                warnings.append(f"列 {column_index} 聚合失败: {error}")
+                fallback_text = "\n".join(b["text"] for b in col_blocks)
+                corrected_parts.append(fallback_text)
+                continue
+            mode = part.get("transcription_mode", mode)
+            for article in part.get("articles") or []:
+                article["id"] = f"c{column_index}-{article.get('id', 'article')}"
+                merged_articles.append(article)
+            merged_corrections.extend(part.get("corrections") or [])
+            warnings.extend(part.get("warnings") or [])
+            if part.get("corrected_text"):
+                corrected_parts.append(part["corrected_text"])
+
+        return self._normalize_aggregate_result(
+            {
+                "articles": merged_articles,
+                "corrected_text": "\n\n".join(corrected_parts),
+                "corrections": merged_corrections,
+                "warnings": warnings
+                + ["大页已按列分块聚合后合并；请复核跨列文章边界。"],
+                "transcription_mode": mode,
+            },
+            direction,
+        )
+
+    @staticmethod
+    def _normalize_aggregate_result(result: Dict, direction: str) -> Dict:
+        articles = result.get("articles") or []
+        normalized = []
+        for index, article in enumerate(articles, 1):
+            if not isinstance(article, dict):
+                continue
+            body = str(
+                article.get("body")
+                or article.get("text")
+                or article.get("content")
+                or ""
+            ).strip()
+            title = str(article.get("title") or "").strip()
+            subtitle = str(article.get("subtitle") or "").strip()
+            normalized.append(
+                {
+                    "id": str(article.get("id") or f"article-{index}"),
+                    "title": title,
+                    "subtitle": subtitle,
+                    "body": body,
+                    "direction": str(article.get("direction") or direction),
+                }
+            )
+        result["articles"] = normalized
+        result.setdefault("corrections", [])
+        result.setdefault("warnings", [])
+        if not result.get("corrected_text"):
+            parts = []
+            for article in normalized:
+                if article["title"]:
+                    parts.append(article["title"])
+                if article["subtitle"]:
+                    parts.append(article["subtitle"])
+                if article["body"]:
+                    parts.append(article["body"])
+            result["corrected_text"] = "\n\n".join(parts)
+        return result
+
     def summarize_document(self, text: str, instruction: str = "") -> Dict:
         prompt = f"""请分析下面这份中国历史报纸的 OCR 转录内容，并且所有面向用户的分析文字必须使用简体中文。
 无论原文或用户要求使用何种语言，summary、key_points、people、organizations、places、dates、topics 和

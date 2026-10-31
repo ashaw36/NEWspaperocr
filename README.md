@@ -12,20 +12,19 @@
 ## ✨ 核心特性
 
 ### 1. 🔍 完整OCR识别
-- 基于 **PaddleOCR** 引擎（PP-OCRv5）
-- 支持繁体字、竖排文字
-- 识别准确率 **>95%**
-- 完整内容无遗漏
+- 默认 **整页识别模式**（`ocr_mode=wholepage`）：整页 OCR 全覆盖，避免高密度竖排欠检测
+- 保留 legacy **分区识别**（`ocr_mode=regions`）：CV 版面分区 + 逐区 OCR，便于 A/B 对比
+- 基于 RapidOCR / PaddleOCR，支持繁体字、竖排文字（竖排图旋转后识别并映射回原图坐标）
 
 ### 2. 📐 智能版面分析
-- AI增强的版面结构识别
-- 准确识别：多栏排版、标题、正文、插图、广告等
+- AI增强的版面结构识别（regions 模式）
+- wholepage 模式仅用轻量投影分栏作阅读顺序提示，文章边界交给 AI
 - 支持复杂古报纸排版
 
 ### 3. 📝 文章聚合
-- **跨栏/跨区域**文章内容聚合
-- 智能判断文章边界
-- 避免文章被错误拆分或合并
+- **整页 + AI 语义聚合**：跨栏归并、纠错、标题识别，输出结构化 articles
+- **跨栏/跨区域**文章内容聚合（regions 路径仍可用 AI correct/compose）
+- 无 AI Key 时降级为全覆盖 raw 文本，不报错
 
 ### 4. 📄 文档生成
 - 输出结构化的最终识别文档
@@ -127,19 +126,29 @@ python test_complete_workflow.py <图片路径>
 
 ### 2. 自动处理流程
 
+**默认：整页识别 + AI 文章聚合（`ocr_mode=wholepage`）**
+
 ```
-上传图片 
+上传图片/PDF
   ↓
-版面分析 (AI增强) 
+页面渲染
   ↓
-OCR识别 (PaddleOCR)
+整页 OCR（竖排→旋转90°→识别→坐标映射回原图）
   ↓
-AI校正与文章聚合
+轻量分栏（投影剖面，仅作阅读顺序提示）
   ↓
-质量验证
+AI 跨栏聚合 + 纠错 + 标题识别
   ↓
 生成最终文档 + AI总结
 ```
+
+**Legacy：分区识别（`ocr_mode=regions`）**
+
+```
+上传 → 版面分析(AI增强) → 确认窗口 → 逐区 OCR → AI校正 → 文档生成
+```
+
+创建任务时可传表单字段 `ocr_mode=wholepage|regions`（默认 `wholepage`），或在 `backend/.env` 中设置 `OCR_MODE`。
 
 ### 3. 导出结果
 
@@ -182,12 +191,12 @@ AI校正与文章聚合
 ### 后端技术
 
 - **Web框架**: Flask 3.1+ - 轻量级Python Web框架
-- **OCR引擎**: RapidOCR (ONNX Runtime) - 高性能OCR识别
+- **OCR引擎**: RapidOCR (ONNX Runtime) / PaddleOCR — 整页或分区识别
+- **整页路径**: `recognize_whole_page` + `segment_columns` + `aggregate_whole_page`
 - **图像处理**: OpenCV 4.10+, Pillow 11+ - 图像预处理和分析
 - **PDF处理**: PyMuPDF 1.24+ - PDF渲染和转换
 - **AI服务**: 
-  - Anthropic API - Claude AI服务
-  - OpenAI API - GPT模型支持
+  - DeepSeek / Anthropic / OpenAI — 文章聚合、校正与总结
 - **数据处理**: NumPy 2.1+ - 数值计算
 
 ### 前端技术

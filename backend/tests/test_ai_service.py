@@ -97,6 +97,56 @@ class AIServiceTests(unittest.TestCase):
 
         service._text_json.assert_not_called()
 
+    def test_aggregate_by_regions_prompt_uses_ordered_region_text(self):
+        service = AIService.__new__(AIService)
+        service.vision_model = None
+        service.client = None
+        service._text_json = Mock(
+            return_value={
+                "articles": [
+                    {
+                        "id": "a1",
+                        "title": "標題",
+                        "subtitle": "",
+                        "body": "正文",
+                        "direction": "vertical-rtl",
+                    }
+                ],
+                "corrected_text": "標題\n正文",
+                "corrections": [],
+                "warnings": [],
+            }
+        )
+
+        regions = [
+            {
+                "region_id": "r1",
+                "order": 1,
+                "label": "title",
+                "article_id": "a1",
+                "direction": "vertical-rtl",
+                "raw_text": "標題文字",
+                "confidence": 0.9,
+            },
+            {
+                "region_id": "r2",
+                "order": 2,
+                "label": "body",
+                "article_id": "a1",
+                "direction": "vertical-rtl",
+                "raw_text": "正文文字",
+                "confidence": 0.85,
+            },
+        ]
+        result = service.aggregate_by_regions(1, regions, direction="vertical-rtl")
+
+        self.assertEqual("a1", result["articles"][0]["id"])
+        prompt = service._text_json.call_args.args[0]
+        self.assertIn("已按视觉版面分区", prompt)
+        self.assertIn("標題文字", prompt)
+        self.assertIn("正文文字", prompt)
+        self.assertIn("保留繁体", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

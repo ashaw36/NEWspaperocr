@@ -18,9 +18,10 @@
 backend/
 ├── app.py                 # Flask应用入口,路由定义
 ├── workflow.py            # 工作流编排,协调各模块
-├── ocr_engine.py          # OCR识别引擎封装
-├── layout_engine.py       # 版面分析引擎
-├── ai_service.py          # AI服务集成(校正,总结)
+├── ocr_engine.py          # OCR识别引擎封装（含 recognize_whole_page）
+├── column_segmenter.py    # 整页模式轻量分栏（投影剖面）
+├── layout_engine.py       # 版面分析引擎（regions 路径）
+├── ai_service.py          # AI服务集成(聚合/校正/总结)
 ├── document_composer.py   # 文档生成器(MD/HTML/JSON)
 ├── quality_validator.py   # 质量验证模块
 ├── task_store.py          # 任务数据持久化
@@ -49,22 +50,22 @@ backend/
 **职责**: 协调OCR识别的完整流程
 
 **核心流程**:
-1. 接收图片上传
-2. 版面分析(可选AI增强)
-3. OCR文字识别
-4. AI校正与文章聚合
-5. 文档生成
+1. 接收图片上传（`options.ocr_mode`: `columnwise` 默认 / `wholepage` / `regions` legacy）
+2. 版面分析(可选AI增强；columnwise/regions 需要视觉 region 边界)
+3. OCR：`run_columnwise_ocr`（逐列旋转）/ `run_wholepage_ocr`（整页）/ `run_ocr`（legacy 分区）
+4. AI 聚合/校正
+5. 文档生成（columnwise/wholepage 走 `compose_from_ai_articles`）
 6. 质量验证
 
 ### ocr_engine.py - OCR引擎
 
 **职责**: 封装OCR识别功能
 
-**使用引擎**: RapidOCR (基于ONNX Runtime)
+**使用引擎**: RapidOCR (基于ONNX Runtime) / PaddleOCR
 
 **核心功能**:
-- 文字区域检测
-- 文字内容识别
+- 文字区域检测与分区识别（`recognize`）
+- 整页识别（`recognize_whole_page`：竖排旋转、bbox 映射回原图）
 - 置信度评估
 - 支持繁体字和竖排文字
 

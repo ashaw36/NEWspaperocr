@@ -149,6 +149,83 @@ class OCREngine:
     def recognize_text(self, image_path: str) -> Dict:
         return self.recognize(image_path)
 
+    def recognize_whole_page(
+        self, image: np.ndarray | str | Path, direction: str = "vertical-rtl"
+    ) -> Dict:
+        """整页 OCR：竖排图先旋转 90°CW，再将 bbox 映射回原图坐标。
+
+        full_text 的阅读顺序可能仍杂乱（引擎按检测顺序），顺序交给 AI 聚合处理；
+        本方法只保证内容全覆盖与坐标正确。
+        """
+        if not self.engine_ready:
+            raise OCRUnavailableError(self.load_error or "No OCR backend is installed")
+
+        if isinstance(image, (str, Path)):
+            loaded = cv2.imread(str(image))
+            if loaded is None:
+                raise OCRExecutionError(f"Cannot load image: {image}")
+            image = loaded
+
+        orig_h, orig_w = image.shape[:2]
+        rotate = direction == "vertical-rtl"
+        ocr_image = (
+            cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE) if rotate else image
+        )
+
+        try:
+            blocks = self._ocr_to_blocks(ocr_image)
+        except Exception as error:
+            raise OCRExecutionError(str(error)) from error
+
+        if rotate:
+            # 旋转空间 (xr, yr) → 原图 (x, y) = (yr, H - xr)
+            # 对应 OpenCV ROTATE_90_CLOCKWISE 的逆映射。
+            for block in blocks:
+                block["bbox"] = self._map_bbox_from_rotate_90_cw(
+                    block["bbox"], orig_h
+                )
+
+        # 原图空间按阅读方向排序（仅作提示；最终顺序由 AI 判定）
+        blocks = self._sort(blocks, direction)
+        for index, block in enumerate(blocks, 1):
+            block["block_id"] = index
+            block["reading_order"] = index
+
+        confidence = (
+            sum(block["confidence"] for block in blocks) / len(blocks)
+            if blocks
+            else 0.0
+        )
+        full_text = "\n".join(block["text"] for block in blocks)
+        return {
+            "blocks": blocks,
+            "full_text": full_text,
+            "total_blocks": len(blocks),
+            "confidence": confidence,
+            "quality": assess_quality(full_text, confidence, len(blocks)),
+            "engine": self.backend,
+        }
+
+    @staticmethod
+    def _map_bbox_from_rotate_90_cw(
+        bbox: List[List[float]], orig_h: int
+    ) -> List[List[float]]:
+        """Map a 4-point polygon from 90°-CW rotated space back to original image."""
+        return [[float(yr), float(orig_h - xr)] for xr, yr in bbox]
+
+    def _ocr_to_blocks(self, image: np.ndarray) -> List[Dict]:
+        """Run the configured OCR backend on an image array; return raw blocks."""
+        if self.backend == "rapidocr":
+            raw, _ = self.ocr(image)
+            return self._rapid_blocks(raw or [])
+        if callable(getattr(self.ocr, "predict", None)):
+            with self._paddle_lock:
+                raw = self.ocr.predict(image)
+            return self._paddle_v3_blocks(raw)
+        with self._paddle_lock:
+            raw = self.ocr.ocr(image, cls=True)
+        return self._paddle_blocks(raw[0] if raw and raw[0] else [])
+
     def _rapid_blocks(self, raw: List) -> List[Dict]:
         blocks = []
         for index, item in enumerate(raw, 1):

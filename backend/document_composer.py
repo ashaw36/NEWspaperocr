@@ -14,6 +14,100 @@ class DocumentComposer:
     def __init__(self):
         self.quality_threshold = 0.95
 
+    def compose_from_ai_articles(
+        self, articles: List[Dict], task_data: Dict, fmt: str = "markdown"
+    ) -> str:
+        """Render articles produced by AI whole-page aggregation.
+
+        Does not use ``_extract_articles`` / article_id region stitching.
+        """
+        if fmt == "html":
+            return self._compose_ai_articles_html(articles, task_data)
+        return self._compose_ai_articles_markdown(articles, task_data)
+
+    def _compose_ai_articles_markdown(
+        self, articles: List[Dict], task_data: Dict
+    ) -> str:
+        lines = []
+        lines.append(f"# {task_data.get('filename', '历史报纸')}")
+        lines.append(
+            f"\n> OCR识别时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        lines.append(f"> 识别模式: 整页OCR + AI文章聚合")
+        lines.append(f"> 文章数: {len(articles)}")
+        lines.append("")
+        lines.append("## 识别的文章")
+        lines.append("")
+        for index, article in enumerate(articles, 1):
+            title = (
+                article.get("title")
+                or article.get("id")
+                or f"文章 {index}"
+            ).strip() or f"文章 {index}"
+            lines.append(f"### {index}. {title}")
+            lines.append("")
+            subtitle = (article.get("subtitle") or "").strip()
+            if subtitle:
+                lines.append(f"*{subtitle}*")
+                lines.append("")
+            body = (
+                article.get("body")
+                or article.get("text")
+                or article.get("content")
+                or ""
+            ).strip()
+            lines.append(body or "*(无正文)*")
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+        return "\n".join(lines)
+
+    def _compose_ai_articles_html(
+        self, articles: List[Dict], task_data: Dict
+    ) -> str:
+        title = task_data.get("filename", "历史报纸")
+        timestamp = datetime.now().strftime("%Y年%m月%d日 %H:%M")
+        parts = [
+            "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"UTF-8\">",
+            f"<title>{title}</title>",
+            "<style>"
+            "body{font-family:\"Songti SC\",STSong,serif;line-height:1.8;"
+            "max-width:900px;margin:0 auto;padding:40px 20px;background:#fafafa;}"
+            "h1{color:#8b4513;text-align:center;}"
+            ".article{background:#fff;padding:30px;margin:30px 0;}"
+            ".article-title{font-size:1.6em;border-left:4px solid #8b4513;"
+            "padding-left:15px;margin-bottom:12px;}"
+            ".article-subtitle{color:#7f8c8d;font-style:italic;margin-bottom:16px;}"
+            ".article-content{text-align:justify;line-height:2;}"
+            "</style></head><body>",
+            f"<h1>{title}</h1>",
+            f"<p style=\"text-align:center;color:#666\">识别时间: {timestamp} | "
+            f"模式: 整页OCR + AI文章聚合 | 文章数: {len(articles)}</p>",
+        ]
+        for index, article in enumerate(articles, 1):
+            art_title = (
+                article.get("title")
+                or article.get("id")
+                or f"文章 {index}"
+            ).strip() or f"文章 {index}"
+            subtitle = (article.get("subtitle") or "").strip()
+            body = (
+                article.get("body")
+                or article.get("text")
+                or article.get("content")
+                or ""
+            ).strip()
+            parts.append('<div class="article">')
+            parts.append(f'<div class="article-title">{index}. {art_title}</div>')
+            if subtitle:
+                parts.append(f'<div class="article-subtitle">{subtitle}</div>')
+            parts.append(
+                f'<div class="article-content">{body.replace(chr(10), "<br>")}</div>'
+            )
+            parts.append("</div>")
+        parts.append("</body></html>")
+        return "".join(parts)
+
     def compose_markdown(self, task_data: Dict, pages: List[Dict]) -> str:
         """Generate a complete Markdown document from OCR results.
 
