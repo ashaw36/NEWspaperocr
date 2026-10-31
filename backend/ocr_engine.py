@@ -168,9 +168,7 @@ class OCREngine:
 
         orig_h, orig_w = image.shape[:2]
         rotate = direction == "vertical-rtl"
-        ocr_image = (
-            cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE) if rotate else image
-        )
+        ocr_image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE) if rotate else image
 
         try:
             blocks = self._ocr_to_blocks(ocr_image)
@@ -181,9 +179,7 @@ class OCREngine:
             # 旋转空间 (xr, yr) → 原图 (x, y) = (yr, H - xr)
             # 对应 OpenCV ROTATE_90_CLOCKWISE 的逆映射。
             for block in blocks:
-                block["bbox"] = self._map_bbox_from_rotate_90_cw(
-                    block["bbox"], orig_h
-                )
+                block["bbox"] = self._map_bbox_from_rotate_90_cw(block["bbox"], orig_h)
 
         # 原图空间按阅读方向排序（仅作提示；最终顺序由 AI 判定）
         blocks = self._sort(blocks, direction)

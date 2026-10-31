@@ -205,12 +205,19 @@ class LayoutEngineTests(unittest.TestCase):
             },
         ]
         mapped = DocumentWorkflow._map_blocks_to_layout_regions(
-            blocks, layout_regions, page_width=100, page_height=100,
+            blocks,
+            layout_regions,
+            page_width=100,
+            page_height=100,
             page_direction="vertical-rtl",
         )
         by_id = {region["region_id"]: region for region in mapped}
-        self.assertEqual(["右上", "右下"], [b["text"] for b in by_id["right"]["text_blocks"]])
-        self.assertEqual(["左上", "左下"], [b["text"] for b in by_id["left"]["text_blocks"]])
+        self.assertEqual(
+            ["右上", "右下"], [b["text"] for b in by_id["right"]["text_blocks"]]
+        )
+        self.assertEqual(
+            ["左上", "左下"], [b["text"] for b in by_id["left"]["text_blocks"]]
+        )
         self.assertEqual("右上\n右下", by_id["right"]["raw_text"])
         self.assertEqual("a1", by_id["right"]["article_id"])
 

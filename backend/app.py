@@ -134,8 +134,10 @@ def create_task():
         return jsonify({"error": "dpi and max_pages must be integers"}), 400
 
     ocr_mode = (
-        request.form.get("ocr_mode") or os.getenv("OCR_MODE", "columnwise")
-    ).strip().lower()
+        (request.form.get("ocr_mode") or os.getenv("OCR_MODE", "columnwise"))
+        .strip()
+        .lower()
+    )
     if ocr_mode not in {"columnwise", "wholepage", "regions"}:
         ocr_mode = "columnwise"
     options = {

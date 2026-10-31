@@ -249,9 +249,7 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
                 "label": region.get("label"),
                 "article_id": region.get("article_id"),
                 "direction": region.get("direction") or direction,
-                "text": region.get("raw_text")
-                or region.get("final_region_text")
-                or "",
+                "text": region.get("raw_text") or region.get("final_region_text") or "",
                 "confidence": region.get("confidence", 0),
             }
             for region in regions_with_ordered_text

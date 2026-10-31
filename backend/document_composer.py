@@ -30,9 +30,7 @@ class DocumentComposer:
     ) -> str:
         lines = []
         lines.append(f"# {task_data.get('filename', '历史报纸')}")
-        lines.append(
-            f"\n> OCR识别时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        )
+        lines.append(f"\n> OCR识别时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append(f"> 识别模式: 整页OCR + AI文章聚合")
         lines.append(f"> 文章数: {len(articles)}")
         lines.append("")
@@ -40,9 +38,7 @@ class DocumentComposer:
         lines.append("")
         for index, article in enumerate(articles, 1):
             title = (
-                article.get("title")
-                or article.get("id")
-                or f"文章 {index}"
+                article.get("title") or article.get("id") or f"文章 {index}"
             ).strip() or f"文章 {index}"
             lines.append(f"### {index}. {title}")
             lines.append("")
@@ -62,16 +58,14 @@ class DocumentComposer:
             lines.append("")
         return "\n".join(lines)
 
-    def _compose_ai_articles_html(
-        self, articles: List[Dict], task_data: Dict
-    ) -> str:
+    def _compose_ai_articles_html(self, articles: List[Dict], task_data: Dict) -> str:
         title = task_data.get("filename", "历史报纸")
         timestamp = datetime.now().strftime("%Y年%m月%d日 %H:%M")
         parts = [
-            "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"UTF-8\">",
+            '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">',
             f"<title>{title}</title>",
             "<style>"
-            "body{font-family:\"Songti SC\",STSong,serif;line-height:1.8;"
+            'body{font-family:"Songti SC",STSong,serif;line-height:1.8;'
             "max-width:900px;margin:0 auto;padding:40px 20px;background:#fafafa;}"
             "h1{color:#8b4513;text-align:center;}"
             ".article{background:#fff;padding:30px;margin:30px 0;}"
@@ -81,14 +75,12 @@ class DocumentComposer:
             ".article-content{text-align:justify;line-height:2;}"
             "</style></head><body>",
             f"<h1>{title}</h1>",
-            f"<p style=\"text-align:center;color:#666\">识别时间: {timestamp} | "
+            f'<p style="text-align:center;color:#666">识别时间: {timestamp} | '
             f"模式: 整页OCR + AI文章聚合 | 文章数: {len(articles)}</p>",
         ]
         for index, article in enumerate(articles, 1):
             art_title = (
-                article.get("title")
-                or article.get("id")
-                or f"文章 {index}"
+                article.get("title") or article.get("id") or f"文章 {index}"
             ).strip() or f"文章 {index}"
             subtitle = (article.get("subtitle") or "").strip()
             body = (

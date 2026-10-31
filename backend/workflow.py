@@ -411,15 +411,12 @@ class DocumentWorkflow:
             selected_pages = [
                 page for page in task["pages"] if page["page_number"] in requested
             ]
-            direction = (
-                task.get("options", {}).get("reading_direction")
-                or (
-                    selected_pages[0]
-                    .get("layout", {})
-                    .get("reading_direction", "vertical-rtl")
-                    if selected_pages
-                    else "vertical-rtl"
-                )
+            direction = task.get("options", {}).get("reading_direction") or (
+                selected_pages[0]
+                .get("layout", {})
+                .get("reading_direction", "vertical-rtl")
+                if selected_pages
+                else "vertical-rtl"
             )
             task["options"]["mode"] = "wholepage"
             task.update(status="ocr_running", stage="ocr", error=None)
@@ -470,9 +467,7 @@ class DocumentWorkflow:
                 recognition = self.ocr.recognize_whole_page(image, page_direction)
                 blocks = recognition["blocks"]
                 page_h, page_w = image.shape[:2]
-                layout_regions = list(
-                    (page.get("layout") or {}).get("regions") or []
-                )
+                layout_regions = list((page.get("layout") or {}).get("regions") or [])
 
                 columns: List[Dict] = []
                 structure_source = "columns"
@@ -488,11 +483,14 @@ class DocumentWorkflow:
                         blocks, columns, page_direction, page["page_number"]
                     )
 
-                ordered_raw = "\n\n".join(
-                    region["raw_text"]
-                    for region in mapped_regions
-                    if region.get("raw_text")
-                ) or recognition["full_text"]
+                ordered_raw = (
+                    "\n\n".join(
+                        region["raw_text"]
+                        for region in mapped_regions
+                        if region.get("raw_text")
+                    )
+                    or recognition["full_text"]
+                )
 
                 page_record = {
                     "page_number": page["page_number"],
@@ -638,15 +636,12 @@ class DocumentWorkflow:
             selected_pages = [
                 page for page in task["pages"] if page["page_number"] in requested
             ]
-            direction = (
-                task.get("options", {}).get("reading_direction")
-                or (
-                    selected_pages[0]
-                    .get("layout", {})
-                    .get("reading_direction", "vertical-rtl")
-                    if selected_pages
-                    else "vertical-rtl"
-                )
+            direction = task.get("options", {}).get("reading_direction") or (
+                selected_pages[0]
+                .get("layout", {})
+                .get("reading_direction", "vertical-rtl")
+                if selected_pages
+                else "vertical-rtl"
             )
             task["options"]["mode"] = "columnwise"
             task.update(status="ocr_running", stage="ocr", error=None)
@@ -712,11 +707,14 @@ class DocumentWorkflow:
                     mapped_regions = self._regions_from_columns(
                         blocks, columns, page_direction, page["page_number"]
                     )
-                    ordered_raw = "\n\n".join(
-                        region["raw_text"]
-                        for region in mapped_regions
-                        if region.get("raw_text")
-                    ) or recognition["full_text"]
+                    ordered_raw = (
+                        "\n\n".join(
+                            region["raw_text"]
+                            for region in mapped_regions
+                            if region.get("raw_text")
+                        )
+                        or recognition["full_text"]
+                    )
                     structure_source = "columns"
                     page_record = {
                         "page_number": page["page_number"],
@@ -955,9 +953,7 @@ class DocumentWorkflow:
             bbox = block.get("bbox") or []
             if direction == "vertical-rtl" and bbox:
                 bbox = OCREngine._map_bbox_from_rotate_90_cw(bbox, crop_h)
-            page_bbox = [
-                [float(point[0]) + ox, float(point[1]) + oy] for point in bbox
-            ]
+            page_bbox = [[float(point[0]) + ox, float(point[1]) + oy] for point in bbox]
             mapped.append({**block, "bbox": page_bbox})
         return mapped
 
@@ -1066,8 +1062,7 @@ class DocumentWorkflow:
                     "region_id": region_id,
                     "order": int(region.get("order") or index),
                     "label": region.get("label") or "body",
-                    "article_id": region.get("article_id")
-                    or f"article-{region_id}",
+                    "article_id": region.get("article_id") or f"article-{region_id}",
                     "direction": direction,
                     "bbox": region.get("bbox"),
                     "raw_text": text,
@@ -1078,9 +1073,7 @@ class DocumentWorkflow:
             )
 
         if loose_blocks:
-            ordered_loose = cls._sort_blocks_by_direction(
-                loose_blocks, page_direction
-            )
+            ordered_loose = cls._sort_blocks_by_direction(loose_blocks, page_direction)
             text = "\n".join(
                 str(block.get("text") or "")
                 for block in ordered_loose
@@ -1528,9 +1521,7 @@ class DocumentWorkflow:
             ai_articles.extend(page.get("articles") or [])
 
         if ocr_mode in {"wholepage", "columnwise"} and ai_articles:
-            content = composer.compose_from_ai_articles(
-                ai_articles, task, fmt=format
-            )
+            content = composer.compose_from_ai_articles(ai_articles, task, fmt=format)
             extension = "html" if format == "html" else "md"
         elif format == "html":
             content = composer.compose_html(task, result["pages"])

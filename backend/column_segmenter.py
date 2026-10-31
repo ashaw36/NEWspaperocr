@@ -122,9 +122,7 @@ def _bands_from_projection(projection: np.ndarray) -> List[tuple[int, int]]:
     return bands
 
 
-def _assign_vertical_column_indices(
-    blocks: List[Dict], columns: List[Dict]
-) -> None:
+def _assign_vertical_column_indices(blocks: List[Dict], columns: List[Dict]) -> None:
     """Assign column_index by mapping block center into rotated-space y bands."""
     if not blocks:
         return
@@ -152,9 +150,7 @@ def _assign_vertical_column_indices(
         block["column_index"] = best
 
 
-def _assign_horizontal_row_indices(
-    blocks: List[Dict], columns: List[Dict]
-) -> None:
+def _assign_horizontal_row_indices(blocks: List[Dict], columns: List[Dict]) -> None:
     if not blocks:
         return
     if not columns:
