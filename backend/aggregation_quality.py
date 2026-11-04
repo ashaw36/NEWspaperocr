@@ -44,7 +44,21 @@ PENALTY_SHORT_BODY = 0.50
 PENALTY_FRAGMENTED_BODY = 0.55
 
 # Title endings that look like cut-off fragments rather than complete phrases.
-_DANGLING_TITLE_SUFFIXES = ("、", "，", "。", "；", "：", "之", "的", "與", "及", "於", "在", "為", "而")
+_DANGLING_TITLE_SUFFIXES = (
+    "、",
+    "，",
+    "。",
+    "；",
+    "：",
+    "之",
+    "的",
+    "與",
+    "及",
+    "於",
+    "在",
+    "為",
+    "而",
+)
 
 # OCR noise markers commonly seen in garbled titles.
 _TITLE_NOISE_RE = re.compile(

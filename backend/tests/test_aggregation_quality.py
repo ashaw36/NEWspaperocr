@@ -161,7 +161,9 @@ class AggregateWithRetryTests(unittest.TestCase):
         good = _good_result()
         aggregate_fn = Mock(side_effect=[bad, good])
 
-        result = self.workflow._aggregate_with_retry(aggregate_fn, 1, [], max_attempts=3)
+        result = self.workflow._aggregate_with_retry(
+            aggregate_fn, 1, [], max_attempts=3
+        )
 
         self.assertEqual(2, aggregate_fn.call_count)
         self.assertEqual("齊燮元視察各地", result["articles"][0]["title"])

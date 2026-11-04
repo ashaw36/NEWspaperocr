@@ -1486,7 +1486,10 @@ class DocumentWorkflow:
                 call_kwargs["hint"] = AGGREGATE_RETRY_HINT
             result = aggregate_fn(*args, **call_kwargs)
             if not isinstance(result, dict):
-                result = {"articles": [], "warnings": [f"聚合返回非 dict: {type(result)}"]}
+                result = {
+                    "articles": [],
+                    "warnings": [f"聚合返回非 dict: {type(result)}"],
+                }
             quality = score_aggregation(result)
             if best_result is None or quality["score"] > best_quality["score"]:
                 best_result = result
@@ -1537,9 +1540,11 @@ class DocumentWorkflow:
         保持既有流水线输出不变）。设为已注册策略名（如 ``"conservative"``）
         时启用；``"none"`` / 空 / off 跳过。
         """
-        mode = str(
-            (task.get("options") or {}).get("correction_mode") or "none"
-        ).strip().lower()
+        mode = (
+            str((task.get("options") or {}).get("correction_mode") or "none")
+            .strip()
+            .lower()
+        )
         if mode in {"", "none", "off", "false", "0"}:
             return page_result
         return apply_page_correction(page_result, get_corrector(mode))
