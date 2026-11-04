@@ -213,8 +213,12 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
         columns: List[Dict],
         page_image: str | Path | None = None,
         direction: str = "vertical-rtl",
+        hint: str = "",
     ) -> Dict:
-        """跨栏聚合整页 OCR 文本块为结构化文章；失败时由调用方降级，不强制抛错。"""
+        """跨栏聚合整页 OCR 文本块为结构化文章；失败时由调用方降级，不强制抛错。
+
+        ``hint`` 非空时追加到 prompt 末尾（重试兜底用）；默认空字符串保持原 prompt。
+        """
         compact_blocks = [
             {
                 "block_id": block.get("block_id", index),
@@ -228,10 +232,10 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
         total_chars = sum(len(item["text"]) for item in compact_blocks)
         if total_chars > 60000 and columns:
             return self._aggregate_whole_page_chunked(
-                page_number, compact_blocks, columns, page_image, direction
+                page_number, compact_blocks, columns, page_image, direction, hint=hint
             )
         return self._aggregate_whole_page_once(
-            page_number, compact_blocks, columns, page_image, direction
+            page_number, compact_blocks, columns, page_image, direction, hint=hint
         )
 
     def aggregate_by_regions(
@@ -240,8 +244,12 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
         regions_with_ordered_text: List[Dict],
         page_image: str | Path | None = None,
         direction: str = "vertical-rtl",
+        hint: str = "",
     ) -> Dict:
-        """在已按视觉版面分区、栏内已排序的文本上做跨栏归并与纠错。"""
+        """在已按视觉版面分区、栏内已排序的文本上做跨栏归并与纠错。
+
+        ``hint`` 非空时追加到 prompt 末尾（重试兜底用）；默认空字符串保持原 prompt。
+        """
         compact = [
             {
                 "region_id": region.get("region_id"),
@@ -258,16 +266,16 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
         total_chars = sum(len(item["text"]) for item in compact)
         if total_chars > 60000 and compact:
             return self._aggregate_by_regions_chunked(
-                page_number, compact, page_image, direction
+                page_number, compact, page_image, direction, hint=hint
             )
         return self._aggregate_by_regions_once(
-            page_number, compact, page_image, direction
+            page_number, compact, page_image, direction, hint=hint
         )
 
     def _aggregate_by_regions_prompt(
-        self, page_number: int, regions: List[Dict], direction: str
+        self, page_number: int, regions: List[Dict], direction: str, hint: str = ""
     ) -> str:
-        return f"""你是民国报纸 OCR 后处理专家。输入是第 {page_number} 页已按视觉版面分区、且栏内已按阅读方向排好序的竖排繁体文本。
+        prompt = f"""你是民国报纸 OCR 后处理专家。输入是第 {page_number} 页已按视觉版面分区、且栏内已按阅读方向排好序的竖排繁体文本。
 页面默认阅读方向：{direction}（vertical-rtl = 栏右→左、栏内上→下；horizontal-ltr = 行上→下、行内左→右）。
 每个 region 已带 article_id / label / direction / 排序后文本；同一 article_id 的多个 region 通常是同一篇文章的相邻栏。
 
@@ -282,6 +290,9 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
 
 已分区且已排序的区域文本：
 {json.dumps(regions, ensure_ascii=False)}"""
+        if hint:
+            prompt = f"{prompt}\n\n{hint}"
+        return prompt
 
     def _aggregate_by_regions_once(
         self,
@@ -289,8 +300,11 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
         regions: List[Dict],
         page_image: str | Path | None,
         direction: str,
+        hint: str = "",
     ) -> Dict:
-        prompt = self._aggregate_by_regions_prompt(page_number, regions, direction)
+        prompt = self._aggregate_by_regions_prompt(
+            page_number, regions, direction, hint=hint
+        )
         if page_image and self.supports_vision:
             try:
                 result = self._vision_json(page_image, prompt, max_tokens=8000)
@@ -310,6 +324,7 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
         regions: List[Dict],
         page_image: str | Path | None,
         direction: str,
+        hint: str = "",
     ) -> Dict:
         """大页保护：按 article_id 分组调用后合并。"""
         by_article: Dict[str, List[Dict]] = {}
@@ -327,7 +342,11 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
             group = sorted(group, key=lambda item: int(item.get("order") or 0))
             try:
                 part = self._aggregate_by_regions_once(
-                    page_number, group, page_image=None, direction=direction
+                    page_number,
+                    group,
+                    page_image=None,
+                    direction=direction,
+                    hint=hint,
                 )
             except Exception as error:
                 warnings.append(f"文章组 {article_id} 聚合失败: {error}")
@@ -361,8 +380,9 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
         blocks: List[Dict],
         columns: List[Dict],
         direction: str,
+        hint: str = "",
     ) -> str:
-        return f"""你是民国报纸 OCR 后处理专家。输入是第 {page_number} 页竖排繁体民国报纸的整页 OCR 文本块（含坐标与列索引）。
+        prompt = f"""你是民国报纸 OCR 后处理专家。输入是第 {page_number} 页竖排繁体民国报纸的整页 OCR 文本块（含坐标与列索引）。
 阅读方向：{direction}（列右→左、列内上→下；column_index 越小越靠右）。
 列带元信息（仅作阅读顺序提示，允许不完美）：
 {json.dumps(columns, ensure_ascii=False)}
@@ -377,6 +397,9 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
 
 OCR 文本块：
 {json.dumps(blocks, ensure_ascii=False)}"""
+        if hint:
+            prompt = f"{prompt}\n\n{hint}"
+        return prompt
 
     def _aggregate_whole_page_once(
         self,
@@ -385,8 +408,11 @@ OCR 文本块：
         columns: List[Dict],
         page_image: str | Path | None,
         direction: str,
+        hint: str = "",
     ) -> Dict:
-        prompt = self._aggregate_prompt(page_number, blocks, columns, direction)
+        prompt = self._aggregate_prompt(
+            page_number, blocks, columns, direction, hint=hint
+        )
         if page_image and self.supports_vision:
             try:
                 result = self._vision_json(page_image, prompt, max_tokens=8000)
@@ -407,6 +433,7 @@ OCR 文本块：
         columns: List[Dict],
         page_image: str | Path | None,
         direction: str,
+        hint: str = "",
     ) -> Dict:
         """大页保护：按列分块调用后合并 articles / corrections。"""
         by_column: Dict[int, List[Dict]] = {}
@@ -430,6 +457,7 @@ OCR 文本块：
                     col_meta or [{"column_index": column_index}],
                     page_image=None,  # 分块时避免重复传大图
                     direction=direction,
+                    hint=hint,
                 )
             except Exception as error:
                 warnings.append(f"列 {column_index} 聚合失败: {error}")

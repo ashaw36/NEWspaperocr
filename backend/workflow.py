@@ -2,21 +2,32 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import traceback
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Dict, List
+from typing import Callable, Dict, List
 
 import cv2
 
+from aggregation_quality import OK_THRESHOLD, score_aggregation
 from ai_service import AIService
 from column_segmenter import segment_columns
+from correction import apply_page_correction, get_corrector
 from image_io import read_image, write_image
 from layout_engine import LayoutEngine
 from ocr_engine import OCREngine, assess_quality, prepare_crop_for_ocr
 from pdf_processor import PDFProcessor
 from task_store import TaskStore, utc_now
+
+# LLM 聚合非确定性兜底：最多重试次数（含首次）。
+AGGREGATE_MAX_ATTEMPTS = 3
+AGGREGATE_RETRY_HINT = (
+    "上次聚合质量不佳，请更严格按列从右到左、栏内从上到下排序，"
+    "标题应为完整短语，避免截取以「之」「、」「，」等结尾的悬空片段，"
+    "正文应连贯成段而非单字碎片。"
+)
 
 
 class WorkflowStateError(RuntimeError):
@@ -507,14 +518,16 @@ class DocumentWorkflow:
                 if self.ai.available:
                     try:
                         if structure_source == "layout-regions":
-                            aggregated = self.ai.aggregate_by_regions(
+                            aggregated = self._aggregate_with_retry(
+                                self.ai.aggregate_by_regions,
                                 page["page_number"],
                                 mapped_regions,
                                 page_image=image_path,
                                 direction=page_direction,
                             )
                         else:
-                            aggregated = self.ai.aggregate_whole_page(
+                            aggregated = self._aggregate_with_retry(
+                                self.ai.aggregate_whole_page,
                                 page["page_number"],
                                 blocks,
                                 columns,
@@ -522,7 +535,9 @@ class DocumentWorkflow:
                                 direction=page_direction,
                             )
                         aggregated["page_number"] = page["page_number"]
-                        corrected_by_page[page["page_number"]] = aggregated
+                        corrected_by_page[page["page_number"]] = (
+                            self._apply_pluggable_correction(task, aggregated)
+                        )
                         ai_aggregated += 1
                     except Exception as error:
                         task.setdefault("warnings", [])
@@ -728,7 +743,8 @@ class DocumentWorkflow:
                     }
                     if self.ai.available:
                         try:
-                            aggregated = self.ai.aggregate_whole_page(
+                            aggregated = self._aggregate_with_retry(
+                                self.ai.aggregate_whole_page,
                                 page["page_number"],
                                 blocks,
                                 columns,
@@ -736,7 +752,9 @@ class DocumentWorkflow:
                                 direction=page_direction,
                             )
                             aggregated["page_number"] = page["page_number"]
-                            corrected_by_page[page["page_number"]] = aggregated
+                            corrected_by_page[page["page_number"]] = (
+                                self._apply_pluggable_correction(task, aggregated)
+                            )
                             ai_aggregated += 1
                         except Exception as error:
                             task.setdefault("warnings", [])
@@ -789,14 +807,17 @@ class DocumentWorkflow:
                     }
                     if self.ai.available:
                         try:
-                            aggregated = self.ai.aggregate_by_regions(
+                            aggregated = self._aggregate_with_retry(
+                                self.ai.aggregate_by_regions,
                                 page["page_number"],
                                 mapped_regions,
                                 page_image=image_path,
                                 direction=page_direction,
                             )
                             aggregated["page_number"] = page["page_number"]
-                            corrected_by_page[page["page_number"]] = aggregated
+                            corrected_by_page[page["page_number"]] = (
+                                self._apply_pluggable_correction(task, aggregated)
+                            )
                             ai_aggregated += 1
                         except Exception as error:
                             task.setdefault("warnings", [])
@@ -1258,7 +1279,9 @@ class DocumentWorkflow:
                             page.get("raw_text", ""),
                         )
                 corrected["page_number"] = page["page_number"]
-                corrected_by_page[page["page_number"]] = corrected
+                corrected_by_page[page["page_number"]] = (
+                    self._apply_pluggable_correction(task, corrected)
+                )
                 result = self._save_corrected_result(
                     task_id, list(corrected_by_page.values()), raw
                 )
@@ -1438,6 +1461,88 @@ class DocumentWorkflow:
             result["full_text"], encoding="utf-8"
         )
         return result
+
+    def _aggregate_with_retry(
+        self,
+        aggregate_fn: Callable[..., Dict],
+        *args,
+        max_attempts: int = AGGREGATE_MAX_ATTEMPTS,
+        **kwargs,
+    ) -> Dict:
+        """对一次 LLM 聚合调用做质量校验 + 重试兜底。
+
+        最多尝试 ``max_attempts`` 次；每次打分后保留最高分结果。
+        全部不达标时不硬失败，返回得分最高的那次，并在 warnings 中说明。
+        第 2 次起若聚合函数支持 ``hint``，追加排序/标题质量提示以引导重采样。
+        """
+        best_result: Dict | None = None
+        best_quality: Dict | None = None
+        attempts_used = 0
+
+        for attempt in range(1, max_attempts + 1):
+            attempts_used = attempt
+            call_kwargs = dict(kwargs)
+            if attempt > 1 and self._aggregate_fn_accepts_hint(aggregate_fn):
+                call_kwargs["hint"] = AGGREGATE_RETRY_HINT
+            result = aggregate_fn(*args, **call_kwargs)
+            if not isinstance(result, dict):
+                result = {"articles": [], "warnings": [f"聚合返回非 dict: {type(result)}"]}
+            quality = score_aggregation(result)
+            if best_result is None or quality["score"] > best_quality["score"]:
+                best_result = result
+                best_quality = quality
+            if quality["ok"]:
+                break
+
+        assert best_result is not None and best_quality is not None
+        warnings = list(best_result.get("warnings") or [])
+        issues_preview = "; ".join(best_quality["issues"][:5]) or "无"
+        if best_quality["ok"]:
+            warnings.append(
+                f"聚合质量校验: score={best_quality['score']:.2f} "
+                f"ok=True threshold={OK_THRESHOLD} "
+                f"attempts={attempts_used}/{max_attempts} "
+                f"issues=[{issues_preview}]"
+            )
+        else:
+            warnings.append(
+                f"聚合质量未达标（已降级采用最高分结果）: "
+                f"score={best_quality['score']:.2f} ok=False "
+                f"threshold={OK_THRESHOLD} "
+                f"attempts={attempts_used}/{max_attempts} "
+                f"issues=[{issues_preview}]"
+            )
+        best_result["warnings"] = warnings
+        return best_result
+
+    @staticmethod
+    def _aggregate_fn_accepts_hint(aggregate_fn: Callable[..., Dict]) -> bool:
+        try:
+            signature = inspect.signature(aggregate_fn)
+        except (TypeError, ValueError):
+            return True
+        if any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in signature.parameters.values()
+        ):
+            return True
+        return "hint" in signature.parameters
+
+    def _apply_pluggable_correction(self, task: Dict, page_result: Dict) -> Dict:
+        """文字级软后处理：AI 聚合/校正产出后、写 corrected.json 前。
+
+        不改版面/阅读顺序/文章聚合等结构层语义，只替换文本字段。
+
+        ``task["options"]["correction_mode"]`` 默认 ``"none"``（最小改动：
+        保持既有流水线输出不变）。设为已注册策略名（如 ``"conservative"``）
+        时启用；``"none"`` / 空 / off 跳过。
+        """
+        mode = str(
+            (task.get("options") or {}).get("correction_mode") or "none"
+        ).strip().lower()
+        if mode in {"", "none", "off", "false", "0"}:
+            return page_result
+        return apply_page_correction(page_result, get_corrector(mode))
 
     def _save_corrected_result(
         self, task_id: str, pages: List[Dict], raw: Dict
