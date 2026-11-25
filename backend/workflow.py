@@ -13,6 +13,7 @@ import cv2
 
 from aggregation_quality import OK_THRESHOLD, score_aggregation
 from ai_service import AIService, UNCERTAIN_MARK
+from collation_report import write_collation_report
 from column_segmenter import segment_columns
 from correction import apply_page_correction, get_corrector
 from coverage import build_region_index, check_coverage, mark_transcribed
@@ -22,6 +23,7 @@ from layout_engine import LayoutEngine
 from ocr_engine import OCREngine, assess_quality, prepare_crop_for_ocr
 from pdf_processor import PDFProcessor
 from task_store import TaskStore, utc_now
+from transcription_agent import TranscriptionAgent
 
 # LLM 聚合非确定性兜底：最多重试次数（含首次）。
 AGGREGATE_MAX_ATTEMPTS = 3
@@ -820,10 +822,12 @@ class DocumentWorkflow:
                     }
                     if self.ai.available:
                         try:
-                            aggregated = self._aggregate_with_retry(
-                                self.ai.aggregate_by_regions,
-                                page["page_number"],
-                                mapped_regions,
+                            aggregated = self._run_transcription_agent(
+                                task=task,
+                                task_id=task_id,
+                                page_number=page["page_number"],
+                                mapped_regions=mapped_regions,
+                                coverage=coverage,
                                 page_image=image_path,
                                 direction=page_direction,
                             )
@@ -1543,6 +1547,58 @@ class DocumentWorkflow:
         (self.store.task_dir(task_id) / "raw.txt").write_text(
             result["full_text"], encoding="utf-8"
         )
+        return result
+
+    def _run_transcription_agent(
+        self,
+        *,
+        task: Dict,
+        task_id: str,
+        page_number: int,
+        mapped_regions: List[Dict],
+        coverage: Dict | None,
+        page_image: Path,
+        direction: str,
+    ) -> Dict:
+        """忠实誊录 Agent：质量校验聚合 + 最多 3 轮自检回炉 + 写校勘报告。"""
+        agent = TranscriptionAgent(self.ai, max_rounds=AGGREGATE_MAX_ATTEMPTS)
+
+        def aggregate_once(regions: List[Dict]) -> Dict:
+            return self._aggregate_with_retry(
+                self.ai.aggregate_by_regions,
+                page_number,
+                regions,
+                page_image=page_image,
+                direction=direction,
+            )
+
+        result = agent.run(
+            page_number=page_number,
+            regions=mapped_regions,
+            aggregate_once=aggregate_once,
+            coverage=coverage,
+            task=task,
+        )
+        report = result.get("collation_report")
+        if report:
+            paths = write_collation_report(
+                self.store.task_dir(task_id), report, also_markdown=True
+            )
+            result["collation_report_files"] = paths
+            task.setdefault("collation", {})
+            if isinstance(task["collation"], dict):
+                task["collation"].update(
+                    {
+                        "result_url": f"/api/tasks/{task_id}/export/collation",
+                        "markdown_url": f"/api/tasks/{task_id}/export/collation-md",
+                        "pages": list(
+                            {
+                                *(task["collation"].get("pages") or []),
+                                page_number,
+                            }
+                        ),
+                    }
+                )
         return result
 
     def _aggregate_with_retry(

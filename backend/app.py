@@ -286,10 +286,17 @@ def export(task_id, kind):
         "json": ("corrected.json", "application/json"),
         "markdown": ("final_document.md", "text/markdown"),
         "html": ("final_document.html", "text/html"),
+        "collation": ("collation_report.json", "application/json"),
+        "collation-md": ("collation_report.md", "text/markdown"),
     }
     if kind not in candidates:
         return (
-            jsonify({"error": "kind must be raw, corrected, json, markdown or html"}),
+            jsonify(
+                {
+                    "error": "kind must be raw, corrected, json, markdown, html, "
+                    "collation or collation-md"
+                }
+            ),
             400,
         )
 
