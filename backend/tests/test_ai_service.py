@@ -146,6 +146,89 @@ class AIServiceTests(unittest.TestCase):
         self.assertIn("標題文字", prompt)
         self.assertIn("正文文字", prompt)
         self.assertIn("保留繁体", prompt)
+        self._assert_faithfulness_constraints(prompt)
+
+    def test_aggregate_prompt_includes_faithfulness_constitution(self):
+        service = AIService.__new__(AIService)
+        prompt = service._aggregate_prompt(
+            1,
+            [{"block_id": 1, "text": "今本創刊", "confidence": 0.9, "bbox": None}],
+            [{"column_index": 0}],
+            "vertical-rtl",
+        )
+        self._assert_faithfulness_constraints(prompt)
+        self.assertIn("今本創刊", prompt)
+        self.assertNotIn("用 □ 表示", prompt)
+
+    def test_correct_page_prompt_includes_faithfulness_constitution(self):
+        service = AIService.__new__(AIService)
+        service.vision_model = None
+        service.client = object()
+        service._text_json = Mock(
+            return_value={
+                "corrected_text": "今本",
+                "articles": [],
+                "corrections": [],
+                "warnings": [],
+            }
+        )
+        regions = [
+            {
+                "region_id": "r1",
+                "order": 1,
+                "label": "body",
+                "article_id": "a1",
+                "direction": "vertical-rtl",
+                "raw_text": "今本創刊號出版",
+                "confidence": 0.8,
+                "quality": {},
+            }
+        ]
+        service.correct_page(1, regions, page_text="今本創刊號出版")
+        prompt = service._text_json.call_args.args[0]
+        self._assert_faithfulness_constraints(prompt)
+        self.assertIn("今本創刊號出版", prompt)
+
+    def test_compose_page_and_transcribe_region_prompts_are_faithful(self):
+        service = AIService.__new__(AIService)
+        service.vision_model = "deepseek-flash"
+        service.client = object()
+        service._text_json = Mock(
+            return_value={
+                "corrected_text": "正文",
+                "articles": [],
+                "corrections": [],
+                "warnings": [],
+            }
+        )
+        service._vision_json = Mock(
+            return_value={"text": "正文", "uncertain": "", "confidence": 0.9}
+        )
+
+        service.compose_page(1, [{"region_id": "r1", "text": "正文"}], page_text="正文")
+        compose_prompt = service._text_json.call_args.args[0]
+        self._assert_faithfulness_constraints(compose_prompt)
+
+        service.transcribe_region(
+            "crop.jpg",
+            {"label": "body", "direction": "vertical-rtl"},
+            page_number=1,
+        )
+        transcribe_prompt = service._vision_json.call_args.args[1]
+        self._assert_faithfulness_constraints(transcribe_prompt)
+        self.assertIn("〔待辨〕", transcribe_prompt)
+        self.assertNotIn("Use □", transcribe_prompt)
+
+    def _assert_faithfulness_constraints(self, prompt: str) -> None:
+        self.assertIn("忠实誊录宪法", prompt)
+        self.assertIn("〔待辨〕", prompt)
+        self.assertIn("禁止改写", prompt)
+        self.assertIn("禁止语义替换", prompt)
+        self.assertIn("忠实度自检", prompt)
+        self.assertIn("字形证据", prompt)
+        # Classic customer failure modes must be explicitly banned.
+        self.assertIn("今本", prompt)
+        self.assertIn("今天", prompt)
 
 
 if __name__ == "__main__":

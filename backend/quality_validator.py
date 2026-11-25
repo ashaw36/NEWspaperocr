@@ -138,9 +138,8 @@ class QualityValidator:
                     or region.get("raw_text", "")
                 )
                 char_count += len(text)
-                uncertain_char_count += text.count(
-                    "□"
-                )  # Placeholder for unreadable chars
+                # □ is legacy; 〔待辨〕 is the current uncertainty marker.
+                uncertain_char_count += text.count("□") + text.count("〔待辨〕")
 
                 if conf < 0.75 and text.strip():
                     low_confidence_regions.append(
@@ -277,7 +276,7 @@ class QualityValidator:
 
             if accuracy["uncertain_char_count"] > 0:
                 recommendations.append(
-                    f"   发现 {accuracy['uncertain_char_count']} 个不确定字符(□),建议人工复核"
+                    f"   发现 {accuracy['uncertain_char_count']} 个不确定字符(〔待辨〕/□),建议人工复核"
                 )
 
             if accuracy["low_confidence_regions"]:

@@ -13,6 +13,34 @@ from typing import Dict, List
 
 from dotenv import load_dotenv
 
+# 忠实誊录「五条宪法」+ 禁改写规则。注入所有聚合/纠错/区域转写 prompt。
+# 目标：LLM 是忠实誊录员，不是编辑；宁可〔待辨〕，不可润色改写。
+UNCERTAIN_MARK = "〔待辨〕"
+
+FAITHFULNESS_CONSTITUTION = f"""
+【忠实誊录宪法——必须遵守，优先级高于通顺与美观】
+1. 原图/OCR 字形证据优先于语义推测；没有字形证据不得凭常识改字。
+2. 字形证据优先于语义推测：只有「字形证据 + 上下文」双重确证才可纠正 OCR 错字；宁可不改也不猜。
+3. 忠实性优先于通顺性：禁止改写措辞、禁止语义替换、禁止润色、禁止为通顺而调整语序或分段。
+4. 真实不确定性优先于虚假确定性：无法可靠辨认的单字用「{UNCERTAIN_MARK}」；整行/整块缺失须在 warnings 单独说明，不得用单个「{UNCERTAIN_MARK}」吞掉整段。
+5. 双向核验不可省略：输出前须自检每段文字都能对应到输入区域文本，不得虚增、重复回插或跨文混接。
+
+【硬性禁止】
+- 禁止将历史措辞改成现代说法（例如「今本」→「今天」、「幾十年来」→「十幾年来」）。
+- 禁止改时间、数字、人名、地名、机构名、报刊名；禁止补字、删字。
+- 禁止整句替换或同义改写；原文不通顺、重复、有误也必须照录。
+- 全文使用繁体；保留异体字、旧字形、历史用语、原文标点与原文分段。
+- 旧约定「□」一律改为「{UNCERTAIN_MARK}」。
+
+【忠实度自检（输出 JSON 前逐条默查）】
+- 有没有改写/润色原文措辞？
+- 有没有补字或删字？
+- 有没有漏字、漏行、漏段？
+- 有没有改动数字/专名/时间？
+- 有没有为通顺而调序或擅自分段？
+若任一项为「有」，必须改回忠实原文或标「{UNCERTAIN_MARK}」后再输出。
+""".strip()
+
 
 class AIUnavailableError(RuntimeError):
     pass
@@ -123,12 +151,15 @@ Return {{"layout_type":"vertical-columns|mixed|grid|horizontal-rows","reading_di
     def transcribe_region(
         self, image_path: str | Path, region: Dict, page_number: int
     ) -> Dict:
-        prompt = f"""Transcribe only this crop from page {page_number} of a historical traditional-Chinese newspaper.
-Read the image directly. Preserve traditional characters, historical spelling, punctuation and line/column order.
-Do not modernize, paraphrase, repair based on general knowledge or invent text outside the crop.
-The crop label is {region.get('label')} and direction is {region.get('direction')}.
-Return JSON only: {{"text":"verbatim transcription","uncertain":"characters or short spans you cannot read","confidence":0.0}}.
-Use □ for an unreadable individual character. If the crop is not text, return an empty text string."""
+        prompt = f"""你是民国报刊忠实誊录员。只转写第 {page_number} 页这一裁切区域的原文，不得改写。
+
+{FAITHFULNESS_CONSTITUTION}
+
+区域标签：{region.get('label')}；阅读方向：{region.get('direction')}。
+只读本裁切图内可见字形；保留繁体、异体字、旧字形、原文标点与栏内顺序。
+不可靠辨认的单字用「{UNCERTAIN_MARK}」。若整块不可辨，text 置空并在 uncertain 说明范围，不得编造。
+只返回 JSON：{{"text":"逐字誊录","uncertain":"无法辨认的字或跨度说明","confidence":0.0}}
+若裁切不是文字，返回空 text。"""
         result = self._vision_json(image_path, prompt, max_tokens=2200)
         result["text"] = str(result.get("text", "")).strip()
         result["uncertain"] = str(result.get("uncertain", "")).strip()
@@ -143,15 +174,18 @@ Use □ for an unreadable individual character. If the crop is not text, return 
     def compose_page(
         self, page_number: int, regions: List[Dict], page_text: str = ""
     ) -> Dict:
-        prompt = f"""Compose the verified visual transcriptions of page {page_number} into readable historical newspaper text.
-Preserve every source character and traditional form. Do not add text not present in region transcriptions. Use region order
-and article_id to combine columns. Keep unresolved □ and list uncertainty rather than guessing. Return JSON only with
-corrected_text, articles (id,title,text), corrections (region_id,original,corrected,reason,confidence), and warnings.
+        prompt = f"""你是民国报刊忠实誊录员。将第 {page_number} 页已核验的区域转写组装为誊录稿。
 
-Region evidence:
+{FAITHFULNESS_CONSTITUTION}
+
+只使用区域转写中已有的文字；不得添加区域中不存在的内容。按 region order 与 article_id 拼栏。
+保留所有「{UNCERTAIN_MARK}」，不确定处列入 warnings，禁止猜测补全。
+只返回 JSON，含 corrected_text、articles（id,title,text）、corrections（region_id,original,corrected,reason,confidence）、warnings。
+
+区域证据：
 {json.dumps(regions, ensure_ascii=False)}
 
-Local OCR is a secondary candidate only; use it to flag conflicts, not overwrite clear visual readings:
+本地 OCR 仅作冲突对照，不得覆盖清晰的视觉誊录：
 {page_text}"""
         return self._text_json(prompt, max_tokens=5000)
 
@@ -175,16 +209,19 @@ Local OCR is a secondary candidate only; use it to flag conflicts, not overwrite
             }
             for region in regions
         ]
-        prompt = f"""Proofread OCR from page {page_number} of a historical traditional-Chinese newspaper.
-Use the page image as the primary evidence and the OCR text only as a draft. Use region order, labels, article grouping
-and semantics. Correct only characters supported by the image or strong context; preserve historical wording, traditional
-characters, names and uncertainty. Never silently modernize the text. Return JSON only with corrected_text, articles
-(id, title, text), corrections (region_id, original, corrected, reason, confidence), and warnings.
+        prompt = f"""你是民国报刊忠实誊录员与校勘员。校对第 {page_number} 页 OCR 草稿。
 
-OCR regions:
+{FAITHFULNESS_CONSTITUTION}
+
+原图为最高依据，OCR 文本只是草稿。利用 region order、label、article_id 组织文章。
+仅在字形证据充分（或字形+上下文双重确证）时纠正错字；否则保留 OCR 原文或标「{UNCERTAIN_MARK}」。
+禁止现代化、禁止润色改写。只返回 JSON，含 corrected_text、articles（id, title, text）、
+corrections（region_id, original, corrected, reason, confidence）、warnings。
+
+OCR 区域：
 {json.dumps(compact, ensure_ascii=False)}
 
-Page OCR draft after any human edits (use it as a transcription hint, not as unquestionable truth):
+经人工修订后的整页 OCR 草稿（仅作提示，不是无可质疑的原文）：
 {page_text}"""
         if page_image and self.supports_vision:
             try:
@@ -275,18 +312,20 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
     def _aggregate_by_regions_prompt(
         self, page_number: int, regions: List[Dict], direction: str, hint: str = ""
     ) -> str:
-        prompt = f"""你是民国报纸 OCR 后处理专家。输入是第 {page_number} 页已按视觉版面分区、且栏内已按阅读方向排好序的竖排繁体文本。
+        prompt = f"""你是民国报刊忠实誊录员。输入是第 {page_number} 页已按视觉版面分区、且栏内已按阅读方向排好序的竖排繁体文本。
 页面默认阅读方向：{direction}（vertical-rtl = 栏右→左、栏内上→下；horizontal-ltr = 行上→下、行内左→右）。
 每个 region 已带 article_id / label / direction / 排序后文本；同一 article_id 的多个 region 通常是同一篇文章的相邻栏。
 
-任务：
-1. 跨栏归并：按 article_id 与语义将相关 region 合并为完整文章；区分标题/副标题/正文/报头(masthead)/广告。
-2. 纠错：纠正明显 OCR 错字，但必须保留繁体、历史措辞与人名地名；不现代化、不臆造；不可读处保留或使用 □。
+{FAITHFULNESS_CONSTITUTION}
+
+任务（按优先级）：
+1. 跨栏归并：按 article_id 与栏位接续将相关 region 合并为完整文章；区分标题/副标题/正文/报头(masthead)/广告。保留栏/段换行层次，不得把整页粘成一行。
+2. 纠错：仅纠正有字形证据支持的明显 OCR 错字；保留繁体、异体字、历史措辞、人名地名与原文标点；不可读处用「{UNCERTAIN_MARK}」。
 3. 定标题：从已分组文本中识别标题/副标题，不要凭空编造标题。
-4. 按报纸阅读顺序输出文章。
+4. 按报纸阅读顺序输出文章；不得为通顺而调序或擅自分段。
 
 只返回一个 JSON 对象：
-{{"articles":[{{"id":"article-1","title":"...","subtitle":"...","body":"...","direction":"{direction}"}}],"corrected_text":"整页按阅读顺序的校正全文","corrections":[{{"region_id":"...","original":"...","corrected":"...","reason":"...","confidence":0.0}}],"warnings":[]}}
+{{"articles":[{{"id":"article-1","title":"...","subtitle":"...","body":"...","direction":"{direction}"}}],"corrected_text":"整页按阅读顺序的忠实誊录全文","corrections":[{{"region_id":"...","original":"...","corrected":"...","reason":"...","confidence":0.0}}],"warnings":[]}}
 
 已分区且已排序的区域文本：
 {json.dumps(regions, ensure_ascii=False)}"""
@@ -382,18 +421,20 @@ Page OCR draft after any human edits (use it as a transcription hint, not as unq
         direction: str,
         hint: str = "",
     ) -> str:
-        prompt = f"""你是民国报纸 OCR 后处理专家。输入是第 {page_number} 页竖排繁体民国报纸的整页 OCR 文本块（含坐标与列索引）。
+        prompt = f"""你是民国报刊忠实誊录员。输入是第 {page_number} 页竖排繁体民国报纸的整页 OCR 文本块（含坐标与列索引）。
 阅读方向：{direction}（列右→左、列内上→下；column_index 越小越靠右）。
 列带元信息（仅作阅读顺序提示，允许不完美）：
 {json.dumps(columns, ensure_ascii=False)}
 
-任务：
-1. 跨栏/跨区域将文本块聚合为完整文章；区分标题/副标题/正文/报头(masthead)/广告。
-2. 纠正明显 OCR 错字（例如「齊爕元」→「齊燮元」），但必须：保留繁体、保留历史措辞与人名地名、不现代化、不臆造、不可读处用 □ 表示。
-3. 按报纸阅读顺序排列文章。
+{FAITHFULNESS_CONSTITUTION}
+
+任务（按优先级）：
+1. 跨栏/跨区域将文本块聚合为完整文章；区分标题/副标题/正文/报头(masthead)/广告。保留换行与栏位层次。
+2. 仅在字形证据充分时纠正明显 OCR 错字（例如「齊爕元」→「齊燮元」）；保留繁体、历史措辞与人名地名；不可读处用「{UNCERTAIN_MARK}」。
+3. 按报纸阅读顺序排列文章；禁止润色、禁止语义替换、禁止补删字。
 
 只返回一个 JSON 对象：
-{{"articles":[{{"id":"article-1","title":"...","subtitle":"...","body":"...","direction":"{direction}"}}],"corrected_text":"整页按阅读顺序的校正全文","corrections":[{{"block_id":1,"original":"...","corrected":"...","reason":"...","confidence":0.0}}],"warnings":[]}}
+{{"articles":[{{"id":"article-1","title":"...","subtitle":"...","body":"...","direction":"{direction}"}}],"corrected_text":"整页按阅读顺序的忠实誊录全文","corrections":[{{"block_id":1,"original":"...","corrected":"...","reason":"...","confidence":0.0}}],"warnings":[]}}
 
 OCR 文本块：
 {json.dumps(blocks, ensure_ascii=False)}"""

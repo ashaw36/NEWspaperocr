@@ -63,7 +63,7 @@ _DANGLING_TITLE_SUFFIXES = (
 # OCR noise markers commonly seen in garbled titles.
 _TITLE_NOISE_RE = re.compile(
     r"(?:"
-    r"□|囗|"  # placeholder boxes
+    r"□|囗|〔待辨〕|"  # placeholder / uncertainty markers
     r"(?<![\u4e00-\u9fff])口(?![\u4e00-\u9fff])|"  # lone 口
     r"[A-Za-z0-9]"  # Latin / digit intrusion in a Chinese headline
     r")"
