@@ -12,9 +12,11 @@ from typing import Callable, Dict, List
 import cv2
 
 from aggregation_quality import OK_THRESHOLD, score_aggregation
-from ai_service import AIService
+from ai_service import AIService, UNCERTAIN_MARK
 from column_segmenter import segment_columns
 from correction import apply_page_correction, get_corrector
+from coverage import build_region_index, check_coverage, mark_transcribed
+from glyph_arbiter import GlyphArbiter, majority_vote
 from image_io import read_image, write_image
 from layout_engine import LayoutEngine
 from ocr_engine import OCREngine, assess_quality, prepare_crop_for_ocr
@@ -772,6 +774,16 @@ class DocumentWorkflow:
                         task_id,
                         page["page_number"],
                     )
+                    coverage = self._attach_coverage_index(
+                        page["page_number"], mapped_regions
+                    )
+                    coverage_warnings = list(
+                        (coverage.get("check") or {}).get("warnings") or []
+                    )
+                    if coverage_warnings:
+                        task.setdefault("warnings", [])
+                        if isinstance(task["warnings"], list):
+                            task["warnings"].extend(coverage_warnings)
                     blocks = [
                         block
                         for region in mapped_regions
@@ -804,6 +816,7 @@ class DocumentWorkflow:
                             ordered_raw, page_confidence, len(blocks)
                         ),
                         "regions": mapped_regions,
+                        "coverage_index": coverage,
                     }
                     if self.ai.available:
                         try:
@@ -923,7 +936,11 @@ class DocumentWorkflow:
         task_id: str,
         page_number: int,
     ) -> List[Dict]:
-        """对每个视觉 region 单独裁剪、旋转 OCR；不调用视觉转录。"""
+        """对每个视觉 region 单独裁剪、旋转 OCR；不调用视觉转录。
+
+        可选：多引擎交叉（recognize_consensus）+ 冲突处字形仲裁。
+        """
+        arbiter = GlyphArbiter(self.ai) if getattr(self, "ai", None) else None
         mapped: List[Dict] = []
         for index, region in enumerate(
             sorted(layout_regions, key=lambda item: int(item.get("order") or 0)), 1
@@ -934,7 +951,10 @@ class DocumentWorkflow:
             prepared = prepare_crop_for_ocr(crop, direction)
             crop_path = crops_dir / f"p{page_number:03d}_{region_id}.png"
             write_image(crop_path, crop)
-            recognition = self.ocr.recognize(prepared, direction)
+            if hasattr(self.ocr, "recognize_consensus"):
+                recognition = self.ocr.recognize_consensus(prepared, direction)
+            else:
+                recognition = self.ocr.recognize(prepared, direction)
             page_blocks = self._map_crop_blocks_to_page(
                 recognition.get("text_blocks") or [], pixel_box, direction
             )
@@ -942,6 +962,12 @@ class DocumentWorkflow:
                 block["region_id"] = region_id
                 block["region_reading_order"] = reading_index
             text = recognition.get("full_text") or ""
+            conflicts = list(recognition.get("conflicts") or [])
+            arbitrations: List[Dict] = []
+            if conflicts and arbiter is not None:
+                text, arbitrations = self._apply_glyph_arbitration(
+                    prepared, text, conflicts, arbiter
+                )
             mapped.append(
                 {
                     "region_id": region_id,
@@ -957,9 +983,66 @@ class DocumentWorkflow:
                     "quality": recognition.get("quality"),
                     "text_blocks": page_blocks,
                     "crop_url": f"/api/tasks/{task_id}/crops/{crop_path.name}",
+                    "engines": recognition.get("engines")
+                    or [getattr(self.ocr, "backend", None)],
+                    "ocr_conflicts": conflicts,
+                    "glyph_arbitrations": arbitrations,
+                    "secondary_text": recognition.get("secondary_text") or "",
                 }
             )
         return mapped
+
+    def _apply_glyph_arbitration(
+        self,
+        crop_image,
+        text: str,
+        conflicts: List[Dict],
+        arbiter: GlyphArbiter,
+    ) -> tuple[str, List[Dict]]:
+        """对多引擎冲突字做候选约束仲裁；失败则多数投票或〔待辨〕。"""
+        if not conflicts:
+            return text, []
+        compact = "".join(ch for ch in text if not ch.isspace())
+        # 仲裁针对紧凑串；再映射回原文过复杂，这里用 consensus 紧凑串重建
+        chars = list(compact)
+        decisions: List[Dict] = []
+        for conflict in conflicts:
+            idx = int(conflict.get("index") or 0)
+            candidates = list(conflict.get("candidates") or [])
+            if arbiter.available:
+                decision = arbiter.arbitrate(crop_image, candidates)
+            else:
+                decision = majority_vote(candidates)
+                if decision.get("glyph") == UNCERTAIN_MARK and candidates:
+                    # 最终兜底：保守纠错表对双字词的命中由 correction 层处理；
+                    # 单字冲突无依据时标待辨。
+                    decision = {
+                        **decision,
+                        "glyph": UNCERTAIN_MARK,
+                        "source": "conflict-uncertain",
+                    }
+            decisions.append({**conflict, "arbitration": decision})
+            glyph = str(decision.get("glyph") or UNCERTAIN_MARK)
+            if 0 <= idx < len(chars):
+                chars[idx] = glyph
+            elif glyph and glyph != UNCERTAIN_MARK:
+                chars.append(glyph)
+        # 冲突后以紧凑串为 raw_text（原空白已在 OCR 拼接中不稳定）
+        return "".join(chars), decisions
+
+    def _attach_coverage_index(
+        self, page_number: int, mapped_regions: List[Dict]
+    ) -> Dict:
+        """生成 P01-B01-C01-L01 覆盖清单并核对，漏区写入 warnings。"""
+        index = build_region_index(page_number, mapped_regions)
+        transcribed = [
+            region["region_id"]
+            for region in mapped_regions
+            if str(region.get("raw_text") or "").strip()
+        ]
+        mark_transcribed(index, transcribed)
+        report = check_coverage(index)
+        return {"regions": index, "check": report}
 
     @staticmethod
     def _map_crop_blocks_to_page(

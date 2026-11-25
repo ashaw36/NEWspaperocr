@@ -431,6 +431,10 @@ class DocumentWorkflowTests(unittest.TestCase):
         )
         self.assertEqual("columnwise-regions", result["pages"][0]["structure_source"])
         self.assertEqual("columnwise", self.store.load(task_id)["ocr"]["mode"])
+        coverage = result["pages"][0].get("coverage_index") or {}
+        self.assertTrue(coverage.get("regions"))
+        self.assertEqual("P01-B01", coverage["regions"][0]["index_id"])
+        self.assertIn("check", coverage)
 
     def test_columnwise_joins_regions_by_order_right_to_left(self):
         """多列按 region.order（右→左）拼接；栏内各自上→下。"""

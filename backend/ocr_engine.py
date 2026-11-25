@@ -6,6 +6,7 @@ import inspect
 import json
 import os
 import threading
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Dict, List
 
@@ -21,12 +22,94 @@ class OCRExecutionError(RuntimeError):
     pass
 
 
+def align_ocr_chars(
+    text_a: str, text_b: str, *, name_a: str = "a", name_b: str = "b"
+) -> Dict:
+    """逐字符对齐两路 OCR 文本，标记冲突位置。
+
+    空白差异忽略；冲突字进入 ``conflicts``，置信提示为 low。
+    """
+    a = _compact_for_align(text_a)
+    b = _compact_for_align(text_b)
+    matcher = SequenceMatcher(a=a, b=b, autojunk=False)
+    chars: List[Dict] = []
+    conflicts: List[Dict] = []
+    index = 0
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for ch in a[i1:i2]:
+                chars.append(
+                    {
+                        "index": index,
+                        "char": ch,
+                        "engines": {name_a: ch, name_b: ch},
+                        "conflict": False,
+                    }
+                )
+                index += 1
+            continue
+        span_a = a[i1:i2]
+        span_b = b[j1:j2]
+        # 不对齐长度时按位置拉链，缺侧用空串
+        width = max(len(span_a), len(span_b))
+        for offset in range(width):
+            ca = span_a[offset] if offset < len(span_a) else ""
+            cb = span_b[offset] if offset < len(span_b) else ""
+            if ca and cb and ca == cb:
+                chars.append(
+                    {
+                        "index": index,
+                        "char": ca,
+                        "engines": {name_a: ca, name_b: cb},
+                        "conflict": False,
+                    }
+                )
+            else:
+                candidates = [c for c in (ca, cb) if c]
+                conflict = {
+                    "index": index,
+                    "char": ca or cb or "",
+                    "engines": {name_a: ca, name_b: cb},
+                    "conflict": True,
+                    "candidates": list(dict.fromkeys(candidates)),
+                    "confidence_hint": "low",
+                }
+                chars.append(conflict)
+                conflicts.append(conflict)
+            index += 1
+    consensus = "".join(
+        item["char"] for item in chars if item["char"] and not item.get("conflict")
+    )
+    # 冲突处仍放入首个候选，便于下游替换
+    consensus_with_conflicts = "".join(
+        (
+            item["candidates"][0]
+            if item.get("conflict") and item.get("candidates")
+            else item["char"]
+        )
+        for item in chars
+        if item.get("char") or (item.get("conflict") and item.get("candidates"))
+    )
+    return {
+        "chars": chars,
+        "conflicts": conflicts,
+        "conflict_count": len(conflicts),
+        "consensus_text": consensus_with_conflicts or consensus,
+        "engines": [name_a, name_b],
+    }
+
+
+def _compact_for_align(text: str) -> str:
+    return "".join(ch for ch in str(text or "") if not ch.isspace())
+
+
 class OCREngine:
     def __init__(
         self,
         use_gpu: bool = False,
         backend: str = "auto",
         paddle_version: str | None = None,
+        multi_engine: bool | None = None,
     ):
         self.use_gpu = use_gpu
         self.requested_backend = backend.strip().lower()
@@ -38,6 +121,8 @@ class OCREngine:
         self.engine_ready = False
         self.ocr = None
         self.load_error = None
+        self.secondary_engine: OCREngine | None = None
+        self.secondary_backend: str | None = None
         if self.requested_backend not in {"auto", "paddleocr", "rapidocr"}:
             self.load_error = f"Unsupported OCR backend: {backend}"
             return
@@ -62,6 +147,16 @@ class OCREngine:
 
         if not self.engine_ready:
             self.load_error = "; ".join(errors)
+            return
+
+        enable_multi = (
+            multi_engine
+            if multi_engine is not None
+            else os.getenv("OCR_MULTI_ENGINE", "true").lower()
+            in {"1", "true", "yes", "on"}
+        )
+        if enable_multi:
+            self._try_load_secondary()
 
     def _load_paddle(self) -> None:
         from paddleocr import PaddleOCR
@@ -91,6 +186,24 @@ class OCREngine:
 
         self.ocr = RapidOCR()
 
+    def _try_load_secondary(self) -> None:
+        """可选第二引擎：已装才用，不装不报错。"""
+        if not self.engine_ready:
+            return
+        other = "paddleocr" if self.backend == "rapidocr" else "rapidocr"
+        try:
+            secondary = OCREngine(
+                use_gpu=self.use_gpu,
+                backend=other,
+                paddle_version=self.paddle_version,
+                multi_engine=False,  # 避免递归加载
+            )
+        except Exception:
+            return
+        if secondary.engine_ready:
+            self.secondary_engine = secondary
+            self.secondary_backend = other
+
     def health(self) -> Dict:
         return {
             "backend": self.backend,
@@ -100,8 +213,53 @@ class OCREngine:
             "model_version": (
                 self.paddle_version if self.backend == "paddleocr" else None
             ),
+            "secondary_backend": self.secondary_backend,
+            "multi_engine": bool(self.secondary_engine),
             "error": self.load_error,
         }
+
+    def recognize_consensus(
+        self, image: np.ndarray | str | Path, direction: str = "horizontal-ltr"
+    ) -> Dict:
+        """主引擎 OCR；若有第二引擎则对齐并标冲突。第二引擎失败不影响主结果。"""
+        primary = self.recognize(image, direction)
+        primary["engines"] = [self.backend]
+        primary["conflicts"] = []
+        primary["char_alignment"] = None
+        primary["secondary_text"] = ""
+        if not self.secondary_engine:
+            return primary
+        try:
+            secondary = self.secondary_engine.recognize(image, direction)
+        except Exception as error:
+            primary.setdefault("quality", {})
+            flags = list(primary.get("quality", {}).get("flags") or [])
+            flags.append("secondary-ocr-failed")
+            primary["quality"]["flags"] = flags
+            primary["secondary_error"] = str(error)
+            return primary
+
+        alignment = align_ocr_chars(
+            primary.get("full_text") or "",
+            secondary.get("full_text") or "",
+            name_a=self.backend,
+            name_b=self.secondary_backend or "secondary",
+        )
+        primary["engines"] = [self.backend, self.secondary_backend]
+        primary["secondary_text"] = secondary.get("full_text") or ""
+        primary["secondary_confidence"] = secondary.get("confidence") or 0.0
+        primary["char_alignment"] = alignment
+        primary["conflicts"] = alignment.get("conflicts") or []
+        if primary["conflicts"]:
+            # 冲突存在时略降整段置信，提示下游仲裁
+            primary["confidence"] = min(float(primary.get("confidence") or 0.0), 0.7)
+            quality = dict(primary.get("quality") or {})
+            flags = list(quality.get("flags") or [])
+            if "engine-conflict" not in flags:
+                flags.append("engine-conflict")
+            quality["flags"] = flags
+            primary["quality"] = quality
+        return primary
 
     def recognize(
         self, image: np.ndarray | str | Path, direction: str = "horizontal-ltr"
